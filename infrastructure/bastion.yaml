@@ -1,0 +1,54 @@
+Description: A general VPN setup
+
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  InstanceAMI:
+    Description: Linux AMI
+    Type: String
+    Default: ami-bf4193c7
+  InstanceType:
+    Description: Bastion Host Instance Type
+    Type: String
+    AllowedValues:
+      - t2.nano
+      - t2.micro
+      - t2.small
+      - t2.medium
+      - t2.large
+    Default: t2.micro
+  KeyName:
+    Description: SSH Key Name
+    Type: AWS::EC2::KeyPair::KeyName
+  SecurityGroup:
+    Type: String
+  PublicSubnet:
+    Type: String
+
+
+Resources:
+
+  BastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref InstanceAMI
+      InstanceType: !Ref InstanceType
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref SecurityGroup
+      SubnetId: !Ref PublicSubnet
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName} Bastion"
+        - Key: project
+          Value: !Ref EnvironmentName
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash
+          yum update -y
+          yum install -y awslogs
+          service awslogs start
+          chkconfig awslogs on
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_386/amazon-ssm-agent.rpm
+          sudo start amazon-ssm-agent

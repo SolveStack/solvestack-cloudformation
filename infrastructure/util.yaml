@@ -1,0 +1,127 @@
+---
+Description: EC2 instances for Elasticsearch
+
+Parameters:
+  Subnet1:
+    Type: String
+  EnvironmentName:
+    Type: String
+  InstanceAMI:
+    Description: Ubuntu 18.04
+    Type: AWS::EC2::Image::Id
+    Default: ami-09c6723c6c24250c9
+  InstanceType:
+    Description: Allowed Instance Sizes For Util
+    Type: String
+    AllowedValues:
+      - t3a.micro
+      - t3.micro
+      - t3.small
+      - t3a.small
+      - t3.medium
+      - t3a.medium
+    Default: t3a.micro
+  KeyName:
+    Description: SSH Key Name
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: admin-primary
+  CoreSecurityGroup:
+    Type: String
+  UtilSecurityGroup:
+    Type: String
+  HostedZoneId:
+    Type: String
+
+Resources:
+
+  UtilRole:
+    Type: AWS::IAM::Role
+    Properties:
+      Path: "/"
+      RoleName: !Sub ${EnvironmentName}-util
+      Description: Allow util access to systems bucket
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service:
+                - ec2.amazonaws.com
+            Action:
+              - sts:AssumeRole
+
+  SystemsS3Access:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref UtilRole
+      PolicyName: !Sub ${EnvironmentName}-aws-util-s3-systems-ro-access
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+            Resource: "arn:aws:s3:::solvestack-systems/*"
+
+  MediaS3Access:
+    Type: AWS::IAM::Policy
+    Properties:
+      Roles:
+        - !Ref UtilRole
+      PolicyName: !Sub ${EnvironmentName}-aws-util-s3-media-rw-access
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+            Resource: !Sub "arn:aws:s3:::svc-solvestack-media-${EnvironmentName}/*"
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+            Resource: !Sub "arn:aws:s3:::svc-solvestack-media-${EnvironmentName}"
+
+  UtilInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub ${EnvironmentName}-util-instance-profile
+      Path: "/"
+      Roles:
+        - !Ref UtilRole
+
+  Util:
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: false
+      ImageId: !Ref InstanceAMI
+      InstanceType: !Ref InstanceType
+      IamInstanceProfile: !Ref UtilInstanceProfile
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref CoreSecurityGroup
+        - !Ref UtilSecurityGroup
+      SubnetId: !Ref Subnet1
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-util"
+        - Key: project
+          Value: !Ref EnvironmentName
+        - Key: ansible_group
+          Value: util
+      UserData:
+        "Fn::Base64": |
+          #!/bin/bash -v
+          apt update -y
+          apt upgrade -y
+
+  UtilDNS:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-util.internal.solvestack.com
+      Type: A
+      TTL: "3600"
+      ResourceRecords:
+        - !GetAtt Util.PrivateIp

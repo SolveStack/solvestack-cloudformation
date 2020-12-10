@@ -1,0 +1,756 @@
+Description: >
+
+
+Parameters:
+
+    ServiceName:
+        Description: The name of this service.  This will need to be edited when you create a new service
+        Type: String
+    VPC:
+        Description: The VPC that the ECS cluster is deployed to
+        Type: AWS::EC2::VPC::Id
+    Cluster:
+        Description: Please provide the ECS Cluster ID that this service should run on
+        Type: String
+    DesiredCount:
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 2
+    MaxCount:
+        Description: Maximum number of instances of this task we can run across our cluster
+        Type: Number
+        Default: 3
+    ECSServiceAutoScalingRoleARN:
+        Description: The ECS service auto scaling role ARN
+        Type: String
+    SolvestackOrgId:
+        Description: ID of Solvestack Organization
+        Type: String
+    AwsAccessKeyId:
+        Description: ID of Solvestack Organization
+        Type: String
+    AwSecretAccessKey:
+        Type: String
+    StorageBucketName:
+        Type: String
+    RedisEndpoint:
+        Type: String
+    IsDebug:
+        Type: String
+        Default: false
+    SwaggerEnabled:
+        Type: String
+        Default: false
+    DbUsername:
+        Type: String
+    DbPassword:
+        Type: String
+    DbEndpoint:
+        Type: String
+    DjangoEmailBackend:
+        Type: String
+        Default: "django.core.mail.backends.console.EmailBackend"
+    DjangoSecretKey:
+        Type: String
+    EsUrl:
+        Type: String
+    EsCA:
+        Type: String
+    LogLevel:
+        Type: String
+        Default: INFO
+    OauthClientId:
+        Type: String
+    OauthClientSecret:
+        Type: String
+    ContainerImageTag:
+        Type: String
+    EnvironmentName:
+        Type: String
+    LoginURL:
+        Type: String
+    CentralLoggingURL:
+      Type: String
+      Default: None
+    SlackToken:
+      Type: String
+    SlackChannel:
+      Type: String
+    DataInsightsEmail:
+      Type: String
+      Default: system.accruent.data-insights@solvestack.com
+    DataInsightsPassword:
+      Type: String
+      Default: None
+    DataInsightsUrl:
+      Type: String
+      Default: https://di-api.accruent.com
+    DataInsightsIsEnabled:
+      Type: String
+      Default: False
+    ReportingBackend:
+      Type: String
+      Default: solvestack
+
+Conditions:
+  IsProduction: !Equals [ !Ref EnvironmentName, prod ]
+  NoCentralLogging: !Equals [ !Ref CentralLoggingURL, None ]
+  UseCentralLogging: !Not [Condition: NoCentralLogging]
+
+Resources:
+
+    Service:
+        Type: AWS::ECS::Service
+        Properties:
+            ServiceName: !Ref ServiceName
+            Cluster: !Ref Cluster
+            DesiredCount: !Ref DesiredCount
+            PlacementStrategies:
+                - Type: spread
+                  Field: host
+            TaskDefinition: !If [UseCentralLogging, !Ref TaskDefinition1, !Ref TaskDefinition2]
+
+    TaskDefinition1:
+        Type: AWS::ECS::TaskDefinition
+        Condition: UseCentralLogging
+        Properties:
+            Family: !Ref ServiceName
+            ContainerDefinitions:
+                - Name: !Ref ServiceName
+                  Essential: true
+                  Image: !Sub 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-api:${ContainerImageTag}
+                  Command:
+                    - "run_channels"
+                  MemoryReservation: 512
+                  Environment:
+                    - Name: SOLVESTACK_ORG_ID
+                      Value: !Ref SolvestackOrgId
+                    - Name: SOLVESTACK_APP_BASE_URL
+                      Value: !If [IsProduction, "https://www.solvestack.com", !Sub "https://${EnvironmentName}.solvestack.com"]
+                    - Name: AWS_AUTO_CREATE_BUCKET
+                      Value: true
+                    - Name: AWS_S3_ENDPOINT_URL
+                      Value: !Sub "https://s3.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_S3_FILE_OVERWRITE
+                      Value: false
+                    - Name: AWS_SES_REGION_ENDPOINT
+                      Value: !Sub "email.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_SES_REGION_NAME
+                      Value: !Ref "AWS::Region"
+                    - Name: AWS_STORAGE_BUCKET_NAME
+                      Value: !Ref StorageBucketName
+                    - Name: CHANNELS_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/2"
+                    - Name: DEBUG
+                      Value: !Ref IsDebug
+                    - Name: DJANGO_ALLOWED_HOSTS
+                      Value: "*"
+                    - Name: DJANGO_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/4"
+                    - Name: DJANGO_EMAIL_BACKEND
+                      Value: !Ref DjangoEmailBackend
+                    - Name: ES_HYDRANT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/3"
+                    - Name: ES_SHARDS_PER_INDEX
+                      Value: 3
+                    - Name: ES_REPLICAS
+                      Value: 1
+                    - Name: ES_URL
+                      Value: !Ref EsUrl
+                    - Name: ES_SSL_CA_DATA
+                      Value: !Ref EsCA
+                    - Name: DEFAULT_FROM_EMAIL
+                      Value: "noreply@solvestack.com"
+                    - Name: LOG_LEVEL
+                      Value: !Ref LogLevel
+                    - Name: OAUTH_CLIENT_ID
+                      Value: !Ref OauthClientId
+                    - Name: PYTHONUNBUFFERED
+                      Value: 1
+                    - Name: REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/1"
+                    - Name: SOLVESTACK_APP_LOGIN_PAGE_URL
+                      Value: !Ref LoginURL
+                    - Name: IS_SWAGGER_ENABLED
+                      Value: !Ref SwaggerEnabled
+                    - Name: ES_BULK_CHUNK_SIZE
+                      Value: 750
+                    - Name: ACCESS_TOKEN_LIFETIME_MINUTES
+                      Value: 60
+                    - Name: REFRESH_TOKEN_LIFETIME_MINUTES
+                      Value: 1440
+                    - Name: MAX_REGISTRATION_TOKEN_AGE_SECONDS
+                      Value: 864000
+                    - Name: MAX_PASSWORD_RESET_TOKEN_AGE_SECONDS
+                      Value: 1800
+                    - Name: SEARCH_RESULT_REDIS_ENABLED
+                      Value: true
+                    - Name: SEARCH_RESULT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/5"
+                    - Name: SEARCH_RESULT_REDIS_TTL
+                      Value: 86400
+                    - Name: ENVIRONMENT
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                    - Name: DJANGO_DB_URL
+                      Value: !Sub "postgres://${DbUsername}:${DbPassword}@${DbEndpoint}/svc_solvestack_api"
+                    - Name: DJANGO_SECRET_KEY
+                      Value: !Ref DjangoSecretKey
+                    - Name: AWS_ACCESS_KEY_ID
+                      Value: !Ref AwsAccessKeyId
+                    - Name: AWS_SECRET_ACCESS_KEY
+                      Value: !Ref AwSecretAccessKey
+                    - Name: OAUTH_CLIENT_SECRET
+                      Value: !Ref OauthClientSecret
+                    - Name: DATA_INSIGHTS_EMAIL
+                      Value: !Ref DataInsightsEmail
+                    - Name: DATA_INSIGHTS_PASSWORD
+                      Value: !Ref DataInsightsPassword
+                    - Name: DATA_INSIGHTS_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/6"
+                    - Name: DATA_INSIGHTS_URL
+                      Value: !Ref DataInsightsUrl
+                    - Name: DATA_INSIGHTS_IS_ENABLED
+                      Value: !Ref DataInsightsIsEnabled
+                    - Name: TASK_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/7"
+                    - Name: WKHTMLTOX_API_URL
+                      Value: !Sub http://wkhtmltox-${EnvironmentName}.internal.solvestack.com
+                    - Name: REPORTING_BACKEND
+                      Value: !Ref ReportingBackend
+
+                  LogConfiguration:
+                    LogDriver: json-file
+
+    TaskDefinition2:
+        Type: AWS::ECS::TaskDefinition
+        Condition: NoCentralLogging
+        Properties:
+            Family: !Ref ServiceName
+            ContainerDefinitions:
+                - Name: !Ref ServiceName
+                  Essential: true
+                  Image: !Sub 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-api:${ContainerImageTag}
+                  Command:
+                    - "run_channels"
+                  MemoryReservation: 512
+                  Environment:
+                    - Name: SOLVESTACK_ORG_ID
+                      Value: !Ref SolvestackOrgId
+                    - Name: SOLVESTACK_APP_BASE_URL
+                      Value: !If [IsProduction, "https://www.solvestack.com", !Sub "https://${EnvironmentName}.solvestack.com"]
+                    - Name: AWS_AUTO_CREATE_BUCKET
+                      Value: true
+                    - Name: AWS_S3_ENDPOINT_URL
+                      Value: !Sub "https://s3.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_S3_FILE_OVERWRITE
+                      Value: false
+                    - Name: AWS_SES_REGION_ENDPOINT
+                      Value: !Sub "email.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_SES_REGION_NAME
+                      Value: !Ref "AWS::Region"
+                    - Name: AWS_STORAGE_BUCKET_NAME
+                      Value: !Ref StorageBucketName
+                    - Name: CHANNELS_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/2"
+                    - Name: DEBUG
+                      Value: !Ref IsDebug
+                    - Name: DJANGO_ALLOWED_HOSTS
+                      Value: "*"
+                    - Name: DJANGO_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/4"
+                    - Name: DJANGO_EMAIL_BACKEND
+                      Value: !Ref DjangoEmailBackend
+                    - Name: ES_HYDRANT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/3"
+                    - Name: ES_REPLICAS
+                      Value: 1
+                    - Name: ES_SHARDS_PER_INDEX
+                      Value: 3
+                    - Name: ES_URL
+                      Value: !Ref EsUrl
+                    - Name: ES_SSL_CA_DATA
+                      Value: !Ref EsCA
+                    - Name: DEFAULT_FROM_EMAIL
+                      Value: "noreply@solvestack.com"
+                    - Name: LOG_LEVEL
+                      Value: !Ref LogLevel
+                    - Name: OAUTH_CLIENT_ID
+                      Value: !Ref OauthClientId
+                    - Name: PYTHONUNBUFFERED
+                      Value: 1
+                    - Name: REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/1"
+                    - Name: SOLVESTACK_APP_LOGIN_PAGE_URL
+                      Value: !Ref LoginURL
+                    - Name: IS_SWAGGER_ENABLED
+                      Value: !Ref SwaggerEnabled
+                    - Name: ES_BULK_CHUNK_SIZE
+                      Value: 750
+                    - Name: ACCESS_TOKEN_LIFETIME_MINUTES
+                      Value: 60
+                    - Name: REFRESH_TOKEN_LIFETIME_MINUTES
+                      Value: 1440
+                    - Name: MAX_REGISTRATION_TOKEN_AGE_SECONDS
+                      Value: 864000
+                    - Name: MAX_PASSWORD_RESET_TOKEN_AGE_SECONDS
+                      Value: 1800
+                    - Name: SEARCH_RESULT_REDIS_ENABLED
+                      Value: true
+                    - Name: SEARCH_RESULT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/5"
+                    - Name: SEARCH_RESULT_REDIS_TTL
+                      Value: 86400
+                    - Name: ENVIRONMENT
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                    - Name: DJANGO_DB_URL
+                      Value: !Sub "postgres://${DbUsername}:${DbPassword}@${DbEndpoint}/svc_solvestack_api"
+                    - Name: DJANGO_SECRET_KEY
+                      Value: !Ref DjangoSecretKey
+                    - Name: AWS_ACCESS_KEY_ID
+                      Value: !Ref AwsAccessKeyId
+                    - Name: AWS_SECRET_ACCESS_KEY
+                      Value: !Ref AwSecretAccessKey
+                    - Name: OAUTH_CLIENT_SECRET
+                      Value: !Ref OauthClientSecret
+                    - Name: DATA_INSIGHTS_EMAIL
+                      Value: !Ref DataInsightsEmail
+                    - Name: DATA_INSIGHTS_PASSWORD
+                      Value: !Ref DataInsightsPassword
+                    - Name: DATA_INSIGHTS_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/6"
+                    - Name: DATA_INSIGHTS_URL
+                      Value: !Ref DataInsightsUrl
+                    - Name: DATA_INSIGHTS_IS_ENABLED
+                      Value: !Ref DataInsightsIsEnabled
+                    - Name: TASK_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/7"
+                    - Name: WKHTMLTOX_API_URL
+                      Value: !Sub http://wkhtmltox-${EnvironmentName}.internal.solvestack.com
+                    - Name: REPORTING_BACKEND
+                      Value: !Ref ReportingBackend
+
+                  LogConfiguration:
+                    LogDriver: awslogs
+                    Options:
+                        awslogs-group: !Ref AWS::StackName
+                        awslogs-region: !Ref AWS::Region
+
+    TaskDefinitionPolymorphic1:
+        Type: AWS::ECS::TaskDefinition
+        Condition: UseCentralLogging
+        Properties:
+            Family: !Sub ${ServiceName}-polymorphic-migration-1
+            ContainerDefinitions:
+                - Name: !Sub ${ServiceName}-polymorphic-migration-1
+                  Essential: true
+                  Image: !Sub 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-api:sku-poly-phase-1
+                  Command:
+                    - "manage migrate"
+                  MemoryReservation: 1024
+                  Environment:
+                    - Name: SOLVESTACK_ORG_ID
+                      Value: !Ref SolvestackOrgId
+                    - Name: SOLVESTACK_APP_BASE_URL
+                      Value: !If [IsProduction, "https://www.solvestack.com", !Sub "https://${EnvironmentName}.solvestack.com"]
+                    - Name: AWS_AUTO_CREATE_BUCKET
+                      Value: true
+                    - Name: AWS_S3_ENDPOINT_URL
+                      Value: !Sub "https://s3.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_S3_FILE_OVERWRITE
+                      Value: false
+                    - Name: AWS_SES_REGION_ENDPOINT
+                      Value: !Sub "email.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_SES_REGION_NAME
+                      Value: !Ref "AWS::Region"
+                    - Name: AWS_STORAGE_BUCKET_NAME
+                      Value: !Ref StorageBucketName
+                    - Name: CHANNELS_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/2"
+                    - Name: DEBUG
+                      Value: !Ref IsDebug
+                    - Name: DJANGO_ALLOWED_HOSTS
+                      Value: "*"
+                    - Name: DJANGO_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/4"
+                    - Name: DJANGO_EMAIL_BACKEND
+                      Value: !Ref DjangoEmailBackend
+                    - Name: ES_HYDRANT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/3"
+                    - Name: ES_SHARDS_PER_INDEX
+                      Value: 3
+                    - Name: ES_REPLICAS
+                      Value: 1
+                    - Name: ES_URL
+                      Value: !Ref EsUrl
+                    - Name: ES_SSL_CA_DATA
+                      Value: !Ref EsCA
+                    - Name: DEFAULT_FROM_EMAIL
+                      Value: "noreply@solvestack.com"
+                    - Name: LOG_LEVEL
+                      Value: !Ref LogLevel
+                    - Name: OAUTH_CLIENT_ID
+                      Value: !Ref OauthClientId
+                    - Name: PYTHONUNBUFFERED
+                      Value: 1
+                    - Name: REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/1"
+                    - Name: SOLVESTACK_APP_LOGIN_PAGE_URL
+                      Value: !Ref LoginURL
+                    - Name: IS_SWAGGER_ENABLED
+                      Value: !Ref SwaggerEnabled
+                    - Name: ES_BULK_CHUNK_SIZE
+                      Value: 750
+                    - Name: ACCESS_TOKEN_LIFETIME_MINUTES
+                      Value: 60
+                    - Name: REFRESH_TOKEN_LIFETIME_MINUTES
+                      Value: 1440
+                    - Name: MAX_REGISTRATION_TOKEN_AGE_SECONDS
+                      Value: 864000
+                    - Name: MAX_PASSWORD_RESET_TOKEN_AGE_SECONDS
+                      Value: 1800
+                    - Name: SEARCH_RESULT_REDIS_ENABLED
+                      Value: true
+                    - Name: SEARCH_RESULT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/5"
+                    - Name: SEARCH_RESULT_REDIS_TTL
+                      Value: 86400
+                    - Name: ENVIRONMENT
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                    - Name: DJANGO_DB_URL
+                      Value: !Sub "postgres://${DbUsername}:${DbPassword}@${DbEndpoint}/svc_solvestack_api"
+                    - Name: DJANGO_SECRET_KEY
+                      Value: !Ref DjangoSecretKey
+                    - Name: AWS_ACCESS_KEY_ID
+                      Value: !Ref AwsAccessKeyId
+                    - Name: AWS_SECRET_ACCESS_KEY
+                      Value: !Ref AwSecretAccessKey
+                    - Name: OAUTH_CLIENT_SECRET
+                      Value: !Ref OauthClientSecret
+                    - Name: DATA_INSIGHTS_EMAIL
+                      Value: !Ref DataInsightsEmail
+                    - Name: DATA_INSIGHTS_PASSWORD
+                      Value: !Ref DataInsightsPassword
+                    - Name: DATA_INSIGHTS_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/6"
+                    - Name: DATA_INSIGHTS_URL
+                      Value: !Ref DataInsightsUrl
+                    - Name: DATA_INSIGHTS_IS_ENABLED
+                      Value: !Ref DataInsightsIsEnabled
+                  LogConfiguration:
+                    LogDriver: json-file
+
+    TaskDefinitionPolymorphic2:
+        Type: AWS::ECS::TaskDefinition
+        Condition: UseCentralLogging
+        Properties:
+            Family: !Sub ${ServiceName}-polymorphic-migration-2
+            ContainerDefinitions:
+                - Name: !Sub ${ServiceName}-polymorphic-migration-2
+                  Essential: true
+                  Image: !Sub 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-api:sku-poly-phase-2
+                  Command:
+                    - "manage migrate"
+                  MemoryReservation: 1024
+                  Environment:
+                    - Name: SOLVESTACK_ORG_ID
+                      Value: !Ref SolvestackOrgId
+                    - Name: SOLVESTACK_APP_BASE_URL
+                      Value: !If [IsProduction, "https://www.solvestack.com", !Sub "https://${EnvironmentName}.solvestack.com"]
+                    - Name: AWS_AUTO_CREATE_BUCKET
+                      Value: true
+                    - Name: AWS_S3_ENDPOINT_URL
+                      Value: !Sub "https://s3.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_S3_FILE_OVERWRITE
+                      Value: false
+                    - Name: AWS_SES_REGION_ENDPOINT
+                      Value: !Sub "email.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_SES_REGION_NAME
+                      Value: !Ref "AWS::Region"
+                    - Name: AWS_STORAGE_BUCKET_NAME
+                      Value: !Ref StorageBucketName
+                    - Name: CHANNELS_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/2"
+                    - Name: DEBUG
+                      Value: !Ref IsDebug
+                    - Name: DJANGO_ALLOWED_HOSTS
+                      Value: "*"
+                    - Name: DJANGO_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/4"
+                    - Name: DJANGO_EMAIL_BACKEND
+                      Value: !Ref DjangoEmailBackend
+                    - Name: ES_HYDRANT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/3"
+                    - Name: ES_SHARDS_PER_INDEX
+                      Value: 3
+                    - Name: ES_REPLICAS
+                      Value: 1
+                    - Name: ES_URL
+                      Value: !Ref EsUrl
+                    - Name: ES_SSL_CA_DATA
+                      Value: !Ref EsCA
+                    - Name: DEFAULT_FROM_EMAIL
+                      Value: "noreply@solvestack.com"
+                    - Name: LOG_LEVEL
+                      Value: !Ref LogLevel
+                    - Name: OAUTH_CLIENT_ID
+                      Value: !Ref OauthClientId
+                    - Name: PYTHONUNBUFFERED
+                      Value: 1
+                    - Name: REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/1"
+                    - Name: SOLVESTACK_APP_LOGIN_PAGE_URL
+                      Value: !Ref LoginURL
+                    - Name: IS_SWAGGER_ENABLED
+                      Value: !Ref SwaggerEnabled
+                    - Name: ES_BULK_CHUNK_SIZE
+                      Value: 750
+                    - Name: ACCESS_TOKEN_LIFETIME_MINUTES
+                      Value: 60
+                    - Name: REFRESH_TOKEN_LIFETIME_MINUTES
+                      Value: 1440
+                    - Name: MAX_REGISTRATION_TOKEN_AGE_SECONDS
+                      Value: 864000
+                    - Name: MAX_PASSWORD_RESET_TOKEN_AGE_SECONDS
+                      Value: 1800
+                    - Name: SEARCH_RESULT_REDIS_ENABLED
+                      Value: true
+                    - Name: SEARCH_RESULT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/5"
+                    - Name: SEARCH_RESULT_REDIS_TTL
+                      Value: 86400
+                    - Name: ENVIRONMENT
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                    - Name: DJANGO_DB_URL
+                      Value: !Sub "postgres://${DbUsername}:${DbPassword}@${DbEndpoint}/svc_solvestack_api"
+                    - Name: DJANGO_SECRET_KEY
+                      Value: !Ref DjangoSecretKey
+                    - Name: AWS_ACCESS_KEY_ID
+                      Value: !Ref AwsAccessKeyId
+                    - Name: AWS_SECRET_ACCESS_KEY
+                      Value: !Ref AwSecretAccessKey
+                    - Name: OAUTH_CLIENT_SECRET
+                      Value: !Ref OauthClientSecret
+                    - Name: DATA_INSIGHTS_EMAIL
+                      Value: !Ref DataInsightsEmail
+                    - Name: DATA_INSIGHTS_PASSWORD
+                      Value: !Ref DataInsightsPassword
+                    - Name: DATA_INSIGHTS_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/6"
+                    - Name: DATA_INSIGHTS_URL
+                      Value: !Ref DataInsightsUrl
+                    - Name: DATA_INSIGHTS_IS_ENABLED
+                      Value: !Ref DataInsightsIsEnabled
+                  LogConfiguration:
+                    LogDriver: json-file
+
+    TaskDefinitionRemoveProjects:
+        Type: AWS::ECS::TaskDefinition
+        Condition: UseCentralLogging
+        Properties:
+            Family: !Sub ${ServiceName}-remove-projects
+            ContainerDefinitions:
+                - Name: !Sub ${ServiceName}-remove-projects
+                  Essential: true
+                  Image: !Sub 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-api:${ContainerImageTag}
+                  Command:
+                    - "manage remove_projects"
+                  MemoryReservation: 1024
+                  Environment:
+                    - Name: SOLVESTACK_ORG_ID
+                      Value: !Ref SolvestackOrgId
+                    - Name: SOLVESTACK_APP_BASE_URL
+                      Value: !If [IsProduction, "https://www.solvestack.com", !Sub "https://${EnvironmentName}.solvestack.com"]
+                    - Name: AWS_AUTO_CREATE_BUCKET
+                      Value: true
+                    - Name: AWS_S3_ENDPOINT_URL
+                      Value: !Sub "https://s3.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_S3_FILE_OVERWRITE
+                      Value: false
+                    - Name: AWS_SES_REGION_ENDPOINT
+                      Value: !Sub "email.${AWS::Region}.amazonaws.com"
+                    - Name: AWS_SES_REGION_NAME
+                      Value: !Ref "AWS::Region"
+                    - Name: AWS_STORAGE_BUCKET_NAME
+                      Value: !Ref StorageBucketName
+                    - Name: CHANNELS_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/2"
+                    - Name: DEBUG
+                      Value: !Ref IsDebug
+                    - Name: DJANGO_ALLOWED_HOSTS
+                      Value: "*"
+                    - Name: DJANGO_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/4"
+                    - Name: DJANGO_EMAIL_BACKEND
+                      Value: !Ref DjangoEmailBackend
+                    - Name: ES_HYDRANT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/3"
+                    - Name: ES_SHARDS_PER_INDEX
+                      Value: 3
+                    - Name: ES_REPLICAS
+                      Value: 1
+                    - Name: ES_URL
+                      Value: !Ref EsUrl
+                    - Name: ES_SSL_CA_DATA
+                      Value: !Ref EsCA
+                    - Name: DEFAULT_FROM_EMAIL
+                      Value: "noreply@solvestack.com"
+                    - Name: LOG_LEVEL
+                      Value: !Ref LogLevel
+                    - Name: OAUTH_CLIENT_ID
+                      Value: !Ref OauthClientId
+                    - Name: PYTHONUNBUFFERED
+                      Value: 1
+                    - Name: REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/1"
+                    - Name: SOLVESTACK_APP_LOGIN_PAGE_URL
+                      Value: !Ref LoginURL
+                    - Name: IS_SWAGGER_ENABLED
+                      Value: !Ref SwaggerEnabled
+                    - Name: ES_BULK_CHUNK_SIZE
+                      Value: 750
+                    - Name: ACCESS_TOKEN_LIFETIME_MINUTES
+                      Value: 60
+                    - Name: REFRESH_TOKEN_LIFETIME_MINUTES
+                      Value: 1440
+                    - Name: MAX_REGISTRATION_TOKEN_AGE_SECONDS
+                      Value: 864000
+                    - Name: MAX_PASSWORD_RESET_TOKEN_AGE_SECONDS
+                      Value: 1800
+                    - Name: SEARCH_RESULT_REDIS_ENABLED
+                      Value: true
+                    - Name: SEARCH_RESULT_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/5"
+                    - Name: SEARCH_RESULT_REDIS_TTL
+                      Value: 86400
+                    - Name: ENVIRONMENT
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                    - Name: DJANGO_DB_URL
+                      Value: !Sub "postgres://${DbUsername}:${DbPassword}@${DbEndpoint}/svc_solvestack_api"
+                    - Name: DJANGO_SECRET_KEY
+                      Value: !Ref DjangoSecretKey
+                    - Name: AWS_ACCESS_KEY_ID
+                      Value: !Ref AwsAccessKeyId
+                    - Name: AWS_SECRET_ACCESS_KEY
+                      Value: !Ref AwSecretAccessKey
+                    - Name: OAUTH_CLIENT_SECRET
+                      Value: !Ref OauthClientSecret
+                    - Name: DATA_INSIGHTS_EMAIL
+                      Value: !Ref DataInsightsEmail
+                    - Name: DATA_INSIGHTS_PASSWORD
+                      Value: !Ref DataInsightsPassword
+                    - Name: DATA_INSIGHTS_CACHE_REDIS_URL
+                      Value: !Sub "redis://${RedisEndpoint}:6379/6"
+                    - Name: DATA_INSIGHTS_URL
+                      Value: !Ref DataInsightsUrl
+                    - Name: DATA_INSIGHTS_IS_ENABLED
+                      Value: !Ref DataInsightsIsEnabled
+                  LogConfiguration:
+                    LogDriver: json-file
+
+    CloudWatchLogsGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Ref AWS::StackName
+            RetentionInDays: 365
+
+    ServiceScalableTarget:
+        Type: "AWS::ApplicationAutoScaling::ScalableTarget"
+        Properties:
+            MaxCapacity: !Ref MaxCount
+            MinCapacity: !Ref DesiredCount
+            ResourceId: !Join
+                - /
+                - - service
+                  - !Ref Cluster
+                  - !GetAtt Service.Name
+            RoleARN: !Ref ECSServiceAutoScalingRoleARN
+            ScalableDimension: ecs:service:DesiredCount
+            ServiceNamespace: ecs
+
+    ServiceScaleOutPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleOutPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalLowerBound: 0
+                  ScalingAdjustment: 1
+
+    ServiceScaleInPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleInPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalUpperBound: 0
+                  ScalingAdjustment: -1
+
+    CPUScaleOutAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization greater than 90% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 90% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '3'
+            Threshold: '90'
+            ComparisonOperator: GreaterThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleOutPolicy
+
+    CPUScaleInAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization less than 70% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 70% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '10'
+            Threshold: '70'
+            ComparisonOperator: LessThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleInPolicy

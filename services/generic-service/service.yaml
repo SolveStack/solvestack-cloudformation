@@ -1,0 +1,219 @@
+Description: >
+
+
+Parameters:
+
+    ServiceName:
+        Description: The name of this service.  This will need to be edited when you create a new service
+        Type: String
+    VPC:
+        Description: The VPC that the ECS cluster is deployed to
+        Type: AWS::EC2::VPC::Id
+    Cluster:
+        Description: Please provide the ECS Cluster ID that this service should run on
+        Type: String
+    DesiredCount:
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 2
+    ServiceRole:
+        Description: The service role created for the Services
+        Type: String
+    MaxCount:
+        Description: Maximum number of instances of this task we can run across our cluster
+        Type: Number
+        Default: 3
+    Listener:
+        Description: The Application Load Balancer listener to register with
+        Type: String
+    HttpsListener:
+        Description: The HTTPS listener to register with
+        Type: String
+    ECSServiceAutoScalingRoleARN:
+        Description: The ECS service auto scaling role ARN
+        Type: String
+
+
+
+Resources:
+
+    Service:
+        Type: AWS::ECS::Service
+        DependsOn: ListenerRule
+        Properties:
+            Cluster: !Ref Cluster
+            Role: !Ref ServiceRole
+            DesiredCount: !Ref DesiredCount
+            TaskDefinition: !Ref TaskDefinition
+            LoadBalancers:
+                - ContainerName: !Ref ServiceName
+                  ContainerPort: 5000
+                  TargetGroupArn: !Ref TargetGroup
+
+    TaskDefinition:
+        Type: AWS::ECS::TaskDefinition
+        Properties:
+            Family: !Ref ServiceName
+            ContainerDefinitions:
+                - Name: !Ref ServiceName
+                  Essential: true
+                  Image: 461537903867.dkr.ecr.us-west-2.amazonaws.com/svc-solvestack-oauth:master
+                  Memory: 128
+                  Environment:
+                    - Name: ACCESS_TOKEN_LIFETIME_HOURS
+                      Value: 8
+                    - Name: ASPNETCORE_ENVIRONMENT
+                      Value: !Ref AspNetCoreEnvironment
+                    - Name: CLIENT_ID
+                      Value: svcsolvestack
+                    - Name: CLIENT_NAME
+                      Value: Solvestack Services
+                    - Name: CLIENT_SECRET
+                      Value: w9uNa6Trmp2KKTdSDVm5nkEsf1t4hpMb
+                    - Name: DOTNET_DBHOST
+                      Value: !Ref DbHost
+                    - Name: DOTNET_DB_PORT
+                      Value: 5432
+                    - Name: DOTNET_USER
+                      Value: !Ref DbUser
+                    - Name: IS_LOCAL
+                      Value: False
+                    - Name: JWT_AUD
+                      Value: svcsolvestack
+                    - Name: JWT_SIGNING_KEY
+                      Value: 401b09eab3c013d4ca54922bb802bec8fd5318192b0a75f201d8b3727429090fb337591abd3e44453b954555b7a0812e1081c39b740293f765eae731f5a65ed1
+                    - Name: POSTGRES_DB
+                      Value: !Ref DbName
+                    - Name: POSTGRES_PASSWORD
+                      Value: !Ref DbPassword
+                    - Name: ServiceBase
+
+
+                  PortMappings:
+                    - ContainerPort: 5000
+                  LogConfiguration:
+                    LogDriver: json-file
+
+
+
+    TargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            VpcId: !Ref VPC
+            Port: 5000
+            Protocol: HTTP
+            Matcher:
+                HttpCode: 200-299
+            HealthCheckIntervalSeconds: 10
+            HealthCheckPath: /service/heartbeat
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 5
+            HealthyThresholdCount: 2
+
+    ListenerRule:
+        Type: AWS::ElasticLoadBalancingV2::ListenerRule
+        Properties:
+            ListenerArn: !Ref Listener
+            Priority: 2
+            Conditions:
+                - Field: host-header
+                  Values:
+                    - !Sub '${ServiceName}.*'
+            Actions:
+                - TargetGroupArn: !Ref TargetGroup
+                  Type: forward
+
+    HttpsListenerRule:
+        Type: AWS::ElasticLoadBalancingV2::ListenerRule
+        Properties:
+            ListenerArn: !Ref HttpsListener
+            Priority: 2
+            Conditions:
+                - Field: host-header
+                  Values:
+                    - !Ref Path
+            Actions:
+                - TargetGroupArn: !Ref TargetGroup
+                  Type: forward
+
+    ServiceScalableTarget:
+        Type: "AWS::ApplicationAutoScaling::ScalableTarget"
+        Properties:
+            MaxCapacity: !Ref MaxCount
+            MinCapacity: !Ref DesiredCount
+            ResourceId: !Join
+                - /
+                - - service
+                  - !Ref Cluster
+                  - !GetAtt Service.Name
+            RoleARN: !Ref ECSServiceAutoScalingRoleARN
+            ScalableDimension: ecs:service:DesiredCount
+            ServiceNamespace: ecs
+
+    ServiceScaleOutPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleOutPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalLowerBound: 0
+                  ScalingAdjustment: 1
+
+    ServiceScaleInPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleInPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalUpperBound: 0
+                  ScalingAdjustment: -1
+
+    CPUScaleOutAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: CPU utilization greater than 90%
+            AlarmDescription: Alarm if cpu utilization greater than 90% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '3'
+            Threshold: '90'
+            ComparisonOperator: GreaterThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleOutPolicy
+
+    CPUScaleInAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: CPU utilization less than 70%
+            AlarmDescription: Alarm if cpu utilization greater than 70% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '10'
+            Threshold: '70'
+            ComparisonOperator: LessThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleInPolicy

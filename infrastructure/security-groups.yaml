@@ -1,0 +1,448 @@
+---
+Description: >
+    This template contains the security groups required by our entire stack.
+    We create them in a seperate nested template, so they can be referenced
+    by all of the other nested templates.
+
+Metadata:
+
+    cfn-lint:
+        config:
+            regions:
+                - us-west-2
+            ignore_checks:
+                - W2001
+
+Parameters:
+
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+
+    VPC:
+        Type: AWS::EC2::VPC::Id
+        Description: Choose which VPC the security groups should be deployed to
+
+    CentralVPNSecurityGroup:
+        Type: String
+        Description: Security Group ID for VPN access.
+        Default: AWS::NoValue
+
+    VpcCIDR:
+        Type: String
+        AllowedPattern: '^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$'
+        Description: CIDR for the VPC this Load balancer services. For the secured load balancer health checks.
+
+Conditions:
+    IsProduction: !Equals [!Ref EnvironmentName, "prod"]
+
+Resources:
+
+    # This security group defines who/where is allowed to access the ECS hosts directly.
+    # By default we're just allowing access from the load balancer.  If you want to SSH
+    # into the hosts, or expose non-load balanced services you can open their ports here.
+    ECSHostSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Access to the ECS hosts and the tasks/containers that run on them
+            SecurityGroupIngress:
+                # Only allow inbound access to ECS from the ELB
+                - SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+                  IpProtocol: "-1"
+                - SourceSecurityGroupId: !Ref PrivateLoadBalancerSecurityGroup
+                  IpProtocol: "-1"
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-ECS-Hosts
+
+    ECSSecurityGroupSelfIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            IpProtocol: "-1"
+            SourceSecurityGroupId: !Ref ECSHostSecurityGroup
+
+    ECSSecurityGroupRDSIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            IpProtocol: tcp
+            SourceSecurityGroupId: !Ref RDSSecurityGroup
+            FromPort: 5432
+            ToPort: 5432
+
+    RDSSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Access to the RDS instances
+            SecurityGroupIngress:
+                # Only allow inbound access to from ECS hosts, and hopefully office/vpn soon
+                - SourceSecurityGroupId: !Ref ECSHostSecurityGroup
+                  IpProtocol: tcp
+                  FromPort: 5432
+                  ToPort: 5432
+                - SourceSecurityGroupId: !Ref UtilSecurityGroup
+                  IpProtocol: tcp
+                  FromPort: 5432
+                  ToPort: 5432
+                  Description: Monitoring for pgsql RDS
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-RDS-Hosts
+
+    ESSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Access for the Elasticsearch Cluster
+            SecurityGroupIngress:
+                - SourceSecurityGroupId: !Ref ECSHostSecurityGroup
+                  IpProtocol: tcp
+                  FromPort: 9200
+                  ToPort: 9301
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-ElasticSearch-Hosts
+
+    ECSSecurityGroupESEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Metadata:
+            cfn-lint:
+                config:
+                    ignore_checks:
+                        - E3002
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            IpProtocol: tcp
+            FromPort: 9200
+            ToPort: 9201
+            SourceSecurityGroupId: !Ref ESSecurityGroup
+
+    ECSSecurityGroupRedisEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Metadata:
+            cfn-lint:
+                config:
+                    ignore_checks:
+                        - E3002
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId: !Ref RedisSecurityGroup
+
+    ECSSecurityGroupWideEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            CidrIp: 0.0.0.0/0
+            IpProtocol: tcp
+            FromPort: 80
+            ToPort: 65535
+
+    ECSSecurityGroupNTPEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref ECSHostSecurityGroup
+            CidrIp: 0.0.0.0/0
+            IpProtocol: udp
+            FromPort: 123
+            ToPort: 123
+
+    ECSSecurityGroupESSelfIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref ESSecurityGroup
+            IpProtocol: tcp
+            FromPort: 9200
+            ToPort: 9301
+            SourceSecurityGroupId: !Ref ESSecurityGroup
+
+    ESSecurityGroupESSelfIngress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Metadata:
+            cfn-lint:
+                config:
+                    ignore_checks:
+                        - E3002
+        Properties:
+            GroupId: !Ref ESSecurityGroup
+            IpProtocol: tcp
+            FromPort: 9200
+            ToPort: 9301
+            SourceSecurityGroupId: !Ref ESSecurityGroup
+
+    RedisSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupName: !Sub ${EnvironmentName}-redis
+            VpcId: !Ref VPC
+            GroupDescription: redis elasticache
+            SecurityGroupIngress:
+                - SourceSecurityGroupId: !Ref ECSHostSecurityGroup
+                  IpProtocol: tcp
+                  FromPort: 6379
+                  ToPort: 6379
+                - SourceSecurityGroupId: !Ref UtilSecurityGroup
+                  IpProtocol: tcp
+                  FromPort: 6379
+                  ToPort: 6379
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-redis
+
+    RedisSecurityGroupESSelfIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref RedisSecurityGroup
+            IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId: !Ref RedisSecurityGroup
+
+    RedisSecurityGroupESSelfEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Metadata:
+            cfn-lint:
+                config:
+                    ignore_checks:
+                        - E3002
+        Properties:
+            GroupId: !Ref RedisSecurityGroup
+            IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId: !Ref RedisSecurityGroup
+
+    RedisSecurityGroupVPNgress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref RedisSecurityGroup
+            CidrIp: !If [IsProduction, '10.85.33.76/32', '10.85.47.253/32']
+            IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            Description: 'VPN access'
+
+    UtilSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupName: !Sub ${EnvironmentName}-Util-Host
+            VpcId: !Ref VPC
+            GroupDescription: Utility Server
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Util-Host
+        DependsOn: ECSHostSecurityGroup
+
+    UtilSecurityGroupEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref UtilSecurityGroup
+            IpProtocol: tcp
+            FromPort: 5432
+            ToPort: 5432
+            DestinationSecurityGroupId: !Ref RDSSecurityGroup
+
+    UtilSecurityGroupRedisEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Metadata:
+            cfn-lint:
+                config:
+                    ignore_checks:
+                        - E3002
+        Properties:
+            GroupId: !Ref UtilSecurityGroup
+            IpProtocol: tcp
+            FromPort: 6379
+            ToPort: 6379
+            SourceSecurityGroupId: !Ref RedisSecurityGroup
+
+    # This security group is primarily responsible for restricing egress to help prevent lateral movement
+    CoreSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            GroupName: !Sub ${EnvironmentName}-Core
+            VpcId: !Ref VPC
+            GroupDescription: Core
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Core
+
+    CoreSecurityGroupSSHIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '10.85.0.0/16'
+            IpProtocol: tcp
+            FromPort: 22
+            ToPort: 443
+
+    CoreSecurityGroupOpenVASIngress:
+        Type: AWS::EC2::SecurityGroupIngress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '172.31.100.143/32'
+            IpProtocol: tcp
+            FromPort: 22
+            ToPort: 22
+
+    CoreSecurityGroupHTTPEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '0.0.0.0/0'
+            IpProtocol: tcp
+            FromPort: 80
+            ToPort: 80
+
+    CoreSecurityGroupHTTPSEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '0.0.0.0/0'
+            IpProtocol: tcp
+            FromPort: 443
+            ToPort: 443
+
+    CoreSecurityGroupNTPEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '0.0.0.0/0'
+            IpProtocol: udp
+            FromPort: 123
+            ToPort: 123
+
+    CoreSecurityGroupSyslogEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '172.31.0.0/16'
+            IpProtocol: udp
+            FromPort: 5140
+            ToPort: 5140
+
+    CoreSecurityGroupSensuEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '172.31.0.0/16'
+            IpProtocol: tcp
+            FromPort: 8081
+            ToPort: 8081
+
+    CoreSecurityGroupFilebeatEgress:
+        Type: AWS::EC2::SecurityGroupEgress
+        Properties:
+            GroupId: !Ref CoreSecurityGroup
+            CidrIp: '172.31.0.0/16'
+            IpProtocol: tcp
+            FromPort: 5044
+            ToPort: 5044
+
+    # This security group defines who/where is allowed to access the Application Load Balancer.
+    # By default, we've opened this up to the public internet (0.0.0.0/0) but can you restrict
+    # it further if you want.
+    LoadBalancerSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Access to the load balancer that sits in front of ECS
+            SecurityGroupIngress:
+                # Allow access from anywhere to our ECS services
+                -
+                    CidrIp: 0.0.0.0/0
+                    IpProtocol: tcp
+                    FromPort: 80
+                    ToPort: 80
+                -
+                    CidrIp: 0.0.0.0/0
+                    IpProtocol: tcp
+                    FromPort: 443
+                    ToPort: 443
+            SecurityGroupEgress:
+                # Don't allow ssh or rdp so that we avoid tripping alerts
+                -
+                    CidrIp: 10.0.0.0/8
+                    IpProtocol: tcp
+                    FromPort: 80
+                    ToPort: 3088
+                -
+                    CidrIp: 10.0.0.0/8
+                    IpProtocol: tcp
+                    FromPort: 3090
+                    ToPort: 65535
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-LoadBalancers
+
+    PrivateLoadBalancerSecurityGroup:
+        Type: AWS::EC2::SecurityGroup
+        Properties:
+            VpcId: !Ref VPC
+            GroupDescription: Access to the private load balancer
+            SecurityGroupIngress:
+                # Allow access from internal environment and VPN
+                -
+                    CidrIp: !Ref VpcCIDR
+                    IpProtocol: tcp
+                    FromPort: 80
+                    ToPort: 80
+                -
+                    CidrIp: 10.85.0.0/16
+                    IpProtocol: tcp
+                    FromPort: 80
+                    ToPort: 80
+            SecurityGroupEgress:
+                # Don't allow ssh or rdp so that we avoid tripping alerts
+                -
+                    CidrIp: 10.0.0.0/8
+                    IpProtocol: tcp
+                    FromPort: 80
+                    ToPort: 3088
+                -
+                    CidrIp: 10.0.0.0/8
+                    IpProtocol: tcp
+                    FromPort: 3090
+                    ToPort: 65535
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-Private-LoadBalancers
+
+Outputs:
+
+    ECSHostSecurityGroup:
+        Description: A reference to the security group for ECS hosts
+        Value: !Ref ECSHostSecurityGroup
+
+    RedisSecurityGroup:
+        Description: A reference to the security group for the redis elasticache cluster
+        Value: !Ref RedisSecurityGroup
+
+    RDSSecurityGroup:
+        Description: A reference to the security group for RDS instances
+        Value: !Ref RDSSecurityGroup
+
+    ESSecurityGroup:
+        Description: A reference to the security group for Elastic Search service domain.
+        Value: !Ref ESSecurityGroup
+
+    UtilSecurityGroup:
+        Description: A reference to the security group for the utility instance.
+        Value: !Ref UtilSecurityGroup
+
+    CoreSecurityGroup:
+        Description: A reference to the security group for common egress.
+        Value: !Ref CoreSecurityGroup
+
+    LoadBalancerSecurityGroup:
+        Description: A reference to the security group for load balancers
+        Value: !Ref LoadBalancerSecurityGroup
+
+    PrivateLoadBalancerSecurityGroup:
+        Description: A reference to the security group for load balancers
+        Value: !Ref PrivateLoadBalancerSecurityGroup

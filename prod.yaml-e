@@ -1,0 +1,254 @@
+Description: ''
+Parameters:
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+  CentralVPNSecurityGroup:
+    Type: String
+    Default: sg-0a3dc649e97adf790
+  PrivateSubnet:
+    Description: Please enter a comma separated list of IP ranges (CIDR notation)
+      for the private subnet
+    Type: CommaDelimitedList
+  PublicSubnet:
+    Description: Please enter a comma separated list of IP ranges (CIDR notation)
+      for the public subnet
+    Type: CommaDelimitedList
+  HostedZoneId:
+    Description: The HOSTED_ZONE_ID in AWS for solvestack.com (may change to another
+      hosted zone in future)
+    Type: String
+    Default: Z07515425R88X5ZJDD64
+  PrivateHostedZoneId:
+    Type: String
+    Description: The private hosted zone ID. Default is internal.solvestack.com
+    Default: Z3UG1K4CTXT0KD
+  AspNetCoreEnvironment:
+    Description: Used for DOTNET projects.  Either Production or Development
+    Type: String
+    AllowedValues:
+    - Production
+    - Development
+  DatabaseUsername:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DatabasePassword:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DbParameterGroup:
+    Description: parameters for postgres
+    Type: String
+    Default: default.postgres10
+  ContainerImageTag:
+    Description: The tag to use for all container images.
+    Type: String
+    Default: master
+  SnapshotIdentifier:
+    Description: identifier of snapshot to create db from
+    Type: String
+  ClientSecret:
+    Description: Client secret for oauth
+    Type: String
+  DjangoSecretKey:
+    Description: DjangoSecret Key
+    Type: String
+  LastForce:
+    Description: last time services were forced to update
+    Type: String
+  RedisHostType:
+    Description: size of Redis nodes.
+    Type: String
+    Default: cache.t3.small
+  RedisVersion:
+    Description: pin the version of redis
+    Type: String
+    Default: 5.0.0
+  AwsAccessKey:
+    Type: String
+  AwsSecretKey:
+    Type: String
+  IsDebug:
+    Type: String
+    Default: true
+  SwaggerEnabled:
+    Type: String
+    Default: false
+  SolvestackOrgId:
+    Type: String
+    Default: CHANGEME
+  S3MediaBucketName:
+    Type: String
+  PrimaryURL:
+    Type: String
+  Cert:
+    Description: Certificate ARN to use, default is solvestack.com
+    Type: String
+    Default: arn:aws:acm:us-west-2:461537903867:certificate/c9a515ad-f143-49ff-a37d-dbea79b04b0b
+  CentralLoggingURL:
+    Type: String
+    Default: None
+  ClusterSize:
+    Type: String
+    Default: 3
+  APIDesiredCount:
+    Type: String
+  APIMaxCount:
+    Type: String
+  WorkerDesiredCount:
+    Type: String
+  WorkerMaxCount:
+    Type: String
+  SubString:
+    Type: String
+  ElasticSearchClusterUrl:
+    Type: String
+    Default: None
+  ElasticSearchClusterCA:
+    Type: String
+    Default: None
+  SlackToken:
+    Type: String
+    Default: None
+  SlackChannel:
+    Type: String
+  DataInsightsEmail:
+    Type: String
+    Default: system.accruent.data-insights@solvestack.com
+  DataInsightsPassword:
+    Type: String
+    Default: None
+  DataInsightsUrl:
+    Type: String
+    Default: https://di-api.accruent.com
+  DataInsightsUIUrl:
+    Type: String
+    Default: https://di.accruent.com
+  DataInsightsIsEnabled:
+    Type: String
+    Default: true
+  ReportWorkersCount:
+    Type: String
+    Default: 1
+  MigrationWorkerCount:
+    Type: String
+    Default: 0
+  ReportingBackend:
+    Type: String
+    Default: solvestack
+Conditions:
+  IsProduction:
+    Fn::Equals:
+    - Ref: AWS::StackName
+    - prod
+  ElasticSearchClusterUnset:
+    Fn::Equals:
+    - Ref: ElasticSearchClusterUrl
+    - None
+  UseElasticSearchCluster:
+    Fn::Not:
+    - Condition: ElasticSearchClusterUnset
+  DisableMigrationWorkers:
+    Fn::Equals:
+    - Ref: MigrationWorkerCount
+    - 0
+  EnableMigrationWorkers:
+    Fn::Not:
+    - Condition: DisableMigrationWorkers
+Resources:
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-west-2.amazonaws.com/solvestack-prod-cloudformation/002303ad4a24475d9b2849a0333faafa.template
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        VpcCIDR:
+          Ref: VpcCIDR
+        PublicSubnet1CIDR:
+          Fn::Select:
+          - 0
+          - Ref: PublicSubnet
+        PublicSubnet2CIDR:
+          Fn::Select:
+          - 1
+          - Ref: PublicSubnet
+        PublicSubnet3CIDR:
+          Fn::Select:
+          - 2
+          - Ref: PublicSubnet
+        PrivateSubnet1CIDR:
+          Fn::Select:
+          - 0
+          - Ref: PrivateSubnet
+        PrivateSubnet2CIDR:
+          Fn::Select:
+          - 1
+          - Ref: PrivateSubnet
+        PrivateSubnet3CIDR:
+          Fn::Select:
+          - 2
+          - Ref: PrivateSubnet
+  SecurityGroups:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-west-2.amazonaws.com/solvestack-prod-cloudformation/a7d88d3819e83bfd58cc80a0552dd1e0.template
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+        CentralVPNSecurityGroup:
+          Ref: CentralVPNSecurityGroup
+        VpcCIDR:
+          Ref: VpcCIDR
+  ALB:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-west-2.amazonaws.com/solvestack-prod-cloudformation/222e802fa9be1c4d7ee488c7b8541d88.template
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        Cert:
+          Ref: Cert
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnets
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.LoadBalancerSecurityGroup
+        PrivateSecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.PrivateLoadBalancerSecurityGroup
+  POSTGRESQL:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: https://s3.us-west-2.amazonaws.com/solvestack-prod-cloudformation/3af82c25520c93196c4c772b3f3fc8e9.template
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        DatabaseUsername:
+          Ref: DatabaseUsername
+        DatabasePassword:
+          Ref: DatabasePassword
+        DbParameterGroup:
+          Ref: DbParameterGroup
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnets
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.RDSSecurityGroup
+        SnapshotIdentifier:
+          Ref: SnapshotIdentifier
+        HostedZoneId: Z3UG1K4CTXT0KD

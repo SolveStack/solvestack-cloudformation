@@ -1,0 +1,84 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  A basic CloudFormation template for an Elasitcache Redis instance.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  ClusterNodeType:
+    Type: String
+    Default: cache.t3.small
+  SecurityGroup:
+    Type: String
+  Subnets:
+    Type: String
+    Description: comma delimited list of subnet IDs.
+  HostedZoneId:
+    Type: String
+  RedisVersion:
+    Type: String
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, "prod"]
+
+Resources:
+  RedisHost:
+    Type: "AWS::ElastiCache::CacheCluster"
+    Properties:
+      AutoMinorVersionUpgrade: true
+      CacheNodeType: !If [IsProduction, "cache.t3.medium", "cache.t3.small"]
+      CacheSubnetGroupName: !Ref RedisSubnets
+      ClusterName: !Sub ${EnvironmentName}-redis
+      Engine: redis
+      EngineVersion: !Ref RedisVersion
+      NumCacheNodes: 1
+      PreferredMaintenanceWindow: sun:22:00-sun:23:30
+      VpcSecurityGroupIds:
+        - !Ref SecurityGroup
+      SnapshotRetentionLimit: 1
+      Tags:
+        - Key: project
+          Value: !Ref EnvironmentName
+  # Example for replication group setup of Redis, for Production/HA config
+  # See commented code for outputs to swap with this. Need to add auto ENV selection
+  # logic in future.
+  # RedisHost:
+  #   Type: "AWS::ElastiCache::ReplicationGroup"
+  #   Properties:
+  #     AutomaticFailoverEnabled: true
+  #     AutoMinorVersionUpgrade: true
+  #     CacheNodeType: !Ref ClusterNodeType
+  #     CacheSubnetGroupName: !Ref RedisSubnets
+  #     Engine: 'redis'
+  #     NumNodeGroups: 1
+  #     ReplicasPerNodeGroup: 3
+  #     ReplicationGroupDescription: !Sub "${AWS::StackName} Redis Cluster"
+  #     Port: !Ref CachePort
+  #     PreferredMaintenanceWindow: sun:22:00-sun:23:30
+  #     SecurityGroupIds:
+  #       - !Ref SecurityGroup
+  #     SnapshotRetentionLimit: 1
+  #
+  RedisSubnets:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      Description: Subnets for Redis cache groups
+      SubnetIds: !Split  [',', !Ref Subnets]
+
+  RedisDNS:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-redis.internal.solvestack.com
+      Type: CNAME
+      TTL: "3600"
+      ResourceRecords:
+        - !GetAtt RedisHost.RedisEndpoint.Address
+
+
+Outputs:
+  RedisAddress:
+    Value: !GetAtt RedisHost.RedisEndpoint.Address
+    # Value: !GetAtt RedisHost.PrimaryEndPoint.Address

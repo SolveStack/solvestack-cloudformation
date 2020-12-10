@@ -1,0 +1,12 @@
+LastForce=<Last run date, aka Today>
+VpcCIDR=10.i<xx>.0.0/16
+PrivateSubnet=10.<xx>.0.0/19,10.<xx>.64.0/19,10.<xx>.128.0/19
+PublicSubnet=10.<xx>.32.0/20,10.<xx>.96.0/20,10.<xx>.160.0/20
+AspNetCoreEnvironment=<Development/Master>
+DatabaseUsername=solvestack
+DatabasePassword=<Unified DB password>
+SnapshotIdentifier=<ARN for RDS snapshot. if the config on the snapshot mismatches what's in Cloudformation, restore will be 2-4 hours>
+ClientSecret=<Secret String>
+DjangoSecretKey=<Random long string for Django to use>
+ContainerImageTag=<master/development/other>
+S3MediaBucketName=<name of bucket to use for svc-solvestack-media>

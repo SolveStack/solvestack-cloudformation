@@ -1,0 +1,529 @@
+---
+Description: >
+
+Parameters:
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+  CentralVPNSecurityGroup:
+    Type: String
+    Default: sg-0a3dc649e97adf790
+  PrivateSubnet:
+    Description: Please enter a comma separated list of IP ranges (CIDR notation) for the private subnet
+    Type: CommaDelimitedList
+  PublicSubnet:
+    Description: Please enter a comma separated list of IP ranges (CIDR notation) for the public subnet
+    Type: CommaDelimitedList
+  HostedZoneId:
+    Description: The HOSTED_ZONE_ID in AWS for solvestack.com (may change to another hosted zone in future)
+    Type: String
+    Default: Z07515425R88X5ZJDD64
+  PrivateHostedZoneId:
+    Type: String
+    Description: The private hosted zone ID. Default is internal.solvestack.com
+    Default: Z3UG1K4CTXT0KD
+  AspNetCoreEnvironment:
+    Description: Used for DOTNET projects.  Either Production or Development
+    Type: String
+    AllowedValues:
+      - Production
+      - Development
+  DatabaseUsername:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DatabasePassword:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DbParameterGroup:
+    Description: parameters for postgres
+    Type: String
+    Default: default.postgres10
+  ContainerImageTag:
+    Description: The tag to use for all container images.
+    Type: String
+    Default: master
+  SnapshotIdentifier:
+    Description: identifier of snapshot to create db from
+    Type: String
+  ClientSecret:
+    Description: Client secret for oauth
+    Type: String
+  DjangoSecretKey:
+    Description: DjangoSecret Key
+    Type: String
+  LastForce:
+    Description: last time services were forced to update
+    Type: String
+  RedisHostType:
+    Description: size of Redis nodes.
+    Type: String
+    Default: cache.t3.small
+  RedisVersion:
+    Description: pin the version of redis
+    Type: String
+    Default: 5.0.0
+  AwsAccessKey:
+    Type: String
+  AwsSecretKey:
+    Type: String
+  IsDebug:
+    Type: String
+    Default: true
+  SwaggerEnabled:
+    Type: String
+    Default: false
+  SolvestackOrgId:
+    Type: String
+    Default: CHANGEME
+  S3MediaBucketName:
+    Type: String
+  PrimaryURL:
+    Type: String
+  Cert:
+    Description: Certificate ARN to use, default is solvestack.com
+    Type: String
+    Default: "arn:aws:acm:us-west-2:461537903867:certificate/c9a515ad-f143-49ff-a37d-dbea79b04b0b"
+  CentralLoggingURL:
+    Type: String
+    Default: None
+
+  ClusterSize:
+    Type: String
+    Default: 3
+  APIDesiredCount:
+    Type: String
+  APIMaxCount:
+    Type: String
+  WorkerDesiredCount:
+    Type: String
+  WorkerMaxCount:
+    Type: String
+  SubString:
+    Type: String
+  ElasticSearchClusterUrl:
+    Type: String
+    Default: None
+  ElasticSearchClusterCA:
+    Type: String
+    Default: None
+  SlackToken:
+    Type: String
+    Default: None
+  SlackChannel:
+    Type: String
+  DataInsightsEmail:
+    Type: String
+    Default: system.accruent.data-insights@solvestack.com
+  DataInsightsPassword:
+    Type: String
+    Default: None
+  DataInsightsUrl:
+    Type: String
+    Default: https://di-api.accruent.com
+  DataInsightsUIUrl:
+    Type: String
+    Default: https://di.accruent.com
+  DataInsightsIsEnabled:
+    Type: String
+    Default: True
+  ReportWorkersCount:
+    Type: String
+    Default: 1
+  MigrationWorkerCount:
+    Type: String
+    Default: 0
+  ReportingBackend:
+    Type: String
+    Default: solvestack
+
+Conditions:
+  IsProduction: !Equals [!Ref "AWS::StackName", prod]
+  ElasticSearchClusterUnset: !Equals [!Ref ElasticSearchClusterUrl, None]
+  UseElasticSearchCluster: !Not [Condition: ElasticSearchClusterUnset]
+  DisableMigrationWorkers: !Equals [!Ref MigrationWorkerCount, 0]
+  EnableMigrationWorkers: !Not [Condition: DisableMigrationWorkers]
+
+Resources:
+
+  VPC:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./infrastructure/vpc.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VpcCIDR: !Ref VpcCIDR
+        PublicSubnet1CIDR: !Select [0, !Ref PublicSubnet]
+        PublicSubnet2CIDR: !Select [1, !Ref PublicSubnet]
+        PublicSubnet3CIDR: !Select [2, !Ref PublicSubnet]
+        PrivateSubnet1CIDR: !Select [0, !Ref PrivateSubnet]
+        PrivateSubnet2CIDR: !Select [1, !Ref PrivateSubnet]
+        PrivateSubnet3CIDR: !Select [2, !Ref PrivateSubnet]
+
+
+  SecurityGroups:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./infrastructure/security-groups.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        VPC: !GetAtt VPC.Outputs.VPC
+        CentralVPNSecurityGroup: !Ref CentralVPNSecurityGroup
+        VpcCIDR: !Ref VpcCIDR
+
+  ALB:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./infrastructure/alb.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        Cert: !Ref Cert
+        VPC: !GetAtt VPC.Outputs.VPC
+        Subnets: !GetAtt VPC.Outputs.PublicSubnets
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.LoadBalancerSecurityGroup
+        PrivateSecurityGroup: !GetAtt SecurityGroups.Outputs.PrivateLoadBalancerSecurityGroup
+
+  # ENVS3BUCKET:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/s3.yaml
+  #     Parameters:
+  #       EnvironmentName: !Ref AWS::StackName
+
+  POSTGRESQL:
+    Type: AWS::CloudFormation::Stack
+    Properties:
+      TemplateURL: ./infrastructure/postgresql.yaml
+      Parameters:
+        EnvironmentName: !Ref AWS::StackName
+        DatabaseUsername: !Ref DatabaseUsername
+        DatabasePassword: !Ref DatabasePassword
+        DbParameterGroup: !Ref DbParameterGroup
+        Subnets: !GetAtt VPC.Outputs.PublicSubnets
+        SecurityGroup: !GetAtt SecurityGroups.Outputs.RDSSecurityGroup
+        SnapshotIdentifier: !Ref SnapshotIdentifier
+        HostedZoneId: Z3UG1K4CTXT0KD
+
+  # ELASTICSEARCH:
+  #   Type: AWS::CloudFormation::Stack
+  #   Condition: ElasticSearchClusterUnset
+  #   Properties:
+  #     TemplateURL: ./infrastructure/elasticsearch.yaml
+  #     Parameters:
+  #       DomainName: !Sub ${AWS::StackName}-es
+  #       ElasticsearchVersion: "6.0"
+  #       InstanceType: "t2.medium.elasticsearch"
+  #       Subnet: !GetAtt VPC.Outputs.PublicSubnet1
+  #       EsSecurityGroup: !GetAtt SecurityGroups.Outputs.ESSecurityGroup
+  #       EnvironmentName: !Ref AWS::StackName
+
+  # REDISINSTANCE:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/redis.yaml
+  #     Parameters:
+  #       EnvironmentName: !Ref AWS::StackName
+  #       ClusterNodeType: !Ref RedisHostType
+  #       SecurityGroup: !GetAtt SecurityGroups.Outputs.RedisSecurityGroup
+  #       Subnets: !GetAtt VPC.Outputs.PrivateSubnets
+  #       HostedZoneId: Z3UG1K4CTXT0KD
+  #       RedisVersion: !Ref RedisVersion
+
+  # ECS:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/ecs.yaml
+  #     Parameters:
+  #       EnvironmentName: !Ref AWS::StackName
+  #       InstanceType: t3.medium
+  #       ClusterSize: !Ref ClusterSize
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+  #       CoreSecurityGroup: !GetAtt SecurityGroups.Outputs.CoreSecurityGroup
+  #       Subnets: !GetAtt VPC.Outputs.PrivateSubnets
+
+
+  # LifecycleHook:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/lifecyclehook.yaml
+  #     Parameters:
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       ECSAutoScalingGroupName: !GetAtt ECS.Outputs.ECSAutoScalingGroupName
+
+  # myDNS:
+  #   Type: AWS::Route53::RecordSetGroup
+  #   Properties:
+  #     HostedZoneId: !Ref HostedZoneId
+  #     Comment: Zone apex alias targeted to ALB LoadBalancer.
+  #     RecordSets:
+  #       - Name: !If [IsProduction, "*.prod.solvestack.com", !Sub "*.${AWS::StackName}.solvestack.com"]
+  #         Type: A
+  #         AliasTarget:
+  #           HostedZoneId: !GetAtt ALB.Outputs.HostedZoneID
+  #           DNSName: !GetAtt ALB.Outputs.LoadBalancerUrl
+
+  # ElasticCluster:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/elastic-cluster.yaml
+  #     Parameters:
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Subnet1: !GetAtt VPC.Outputs.PrivateSubnet1
+  #       Subnet2: !GetAtt VPC.Outputs.PrivateSubnet2
+  #       Subnet3: !GetAtt VPC.Outputs.PrivateSubnet3
+  #       EnvironmentName: !Ref "AWS::StackName"
+  #       InstanceType: t3.large
+  #       ClusterSize: "3"
+  #       KeyName: admin-primary
+  #       ESSecurityGroup: !GetAtt SecurityGroups.Outputs.ESSecurityGroup
+  #       CoreSecurityGroup: !GetAtt SecurityGroups.Outputs.CoreSecurityGroup
+  #       HostedZoneId: Z3UG1K4CTXT0KD
+
+  # Util:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/util.yaml
+  #     Parameters:
+  #       Subnet1: !GetAtt VPC.Outputs.PrivateSubnet1
+  #       EnvironmentName: !Ref "AWS::StackName"
+  #       InstanceType: t3a.micro
+  #       KeyName: admin-primary
+  #       CoreSecurityGroup: !GetAtt SecurityGroups.Outputs.CoreSecurityGroup
+  #       UtilSecurityGroup: !GetAtt SecurityGroups.Outputs.UtilSecurityGroup
+  #       HostedZoneId: Z3UG1K4CTXT0KD
+
+  # Bastion:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./infrastructure/bastion.yaml
+  #     Parameters:
+  #       EnvironmentName: !Ref "AWS::StackName"
+  #       InstanceAMI: ami-a0cfeed8
+  #       InstanceType: t2.micro
+  #       KeyName: admin-primary
+  #       SecurityGroup: !GetAtt SecurityGroups.Outputs.ECSHostSecurityGroup
+  #       PublicSubnet: !GetAtt VPC.Outputs.PublicSubnet1
+
+  # SvcSolvestackApi:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./services/svc-solvestack-api/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub svc-solvestack-api-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: !Ref APIDesiredCount
+  #       Priority: 5
+  #       MaxCount: !Ref APIMaxCount
+  #       LoginURL: !Ref PrimaryURL
+  #       Path: 'svc-solvestack-api.*'
+  #       Listener: !GetAtt ALB.Outputs.Listener
+  #       HttpsListener: !GetAtt ALB.Outputs.HttpsListener
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       SolvestackOrgId: !Ref SolvestackOrgId
+  #       AwsAccessKeyId: !Ref AwsAccessKey
+  #       AwSecretAccessKey: !Ref AwsSecretKey
+  #       ContainerImageTag: !Ref ContainerImageTag
+  #       StorageBucketName: !Sub svc-solvestack-media-${AWS::StackName}
+  #       RedisEndpoint: !GetAtt REDISINSTANCE.Outputs.RedisAddress
+  #       IsDebug: !Ref IsDebug
+  #       SwaggerEnabled: !Ref SwaggerEnabled
+  #       DbUsername: !Ref DatabaseUsername
+  #       DbPassword: !Ref DatabasePassword
+  #       DbEndpoint: !GetAtt POSTGRESQL.Outputs.DbHost
+  #       DjangoEmailBackend: "django_ses.SESBackend"
+  #       DjangoSecretKey: !Ref DjangoSecretKey
+  #       EsUrl: !If [UseElasticSearchCluster, !Ref ElasticSearchClusterUrl, !Sub "https://${ELASTICSEARCH.Outputs.DomainEndpoint}"]
+  #       EsCA: !Ref ElasticSearchClusterCA
+  #       LogLevel: "INFO"
+  #       OauthClientId: svcsolvestack
+  #       OauthClientSecret: !Ref ClientSecret
+  #       CentralLoggingURL: !Ref CentralLoggingURL
+  #       SlackToken: !Ref SlackToken
+  #       SlackChannel: !Ref SlackChannel
+  #       DataInsightsEmail: !Ref DataInsightsEmail
+  #       DataInsightsPassword: !Ref DataInsightsPassword
+  #       DataInsightsUrl: !Ref DataInsightsUrl
+  #       DataInsightsUIUrl: !Ref DataInsightsUIUrl
+  #       DataInsightsIsEnabled: !Ref DataInsightsIsEnabled
+  #       ReportingBackend: !Ref ReportingBackend
+
+  # SvcWkhtmltoxApi:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./services/svc-wkhtmltox-api/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub svc-wkhtmltox-api-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: !If [IsProduction, 2, 1]
+  #       MaxCount: 3
+  #       PrivateLoadBalancerUrl: !GetAtt ALB.Outputs.PrivateLoadBalancerUrl
+  #       PrivateHttpListener: !GetAtt ALB.Outputs.PrivateHttpListener
+  #       PrivateHostedZoneId: !Ref PrivateHostedZoneId
+  #       PrivateALBHostedZoneId: !GetAtt ALB.Outputs.PrivateHostedZoneID
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       SlackToken: !Ref SlackToken
+  #       SlackChannel: !Ref SlackChannel
+
+  # SvcSolvestackApiWorker:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./services/svc-solvestack-api-worker/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub svc-solvestack-api-worker-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: !Ref WorkerDesiredCount
+  #       MaxCount: !Ref WorkerMaxCount
+  #       ContainerImageTag: !Ref ContainerImageTag
+  #       LoginURL: !Ref PrimaryURL
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       SolvestackOrgId: !Ref SolvestackOrgId
+  #       AwsAccessKeyId: !Ref AwsAccessKey
+  #       AwSecretAccessKey: !Ref AwsSecretKey
+  #       StorageBucketName: !Sub svc-solvestack-media-${AWS::StackName}
+  #       RedisEndpoint: !GetAtt REDISINSTANCE.Outputs.RedisAddress
+  #       IsDebug: !Ref IsDebug
+  #       SwaggerEnabled: !Ref SwaggerEnabled
+  #       DbUsername: !Ref DatabaseUsername
+  #       DbPassword: !Ref DatabasePassword
+  #       DbEndpoint: !GetAtt POSTGRESQL.Outputs.DbHost
+  #       DjangoEmailBackend: "django_ses.SESBackend"
+  #       DjangoSecretKey: !Ref DjangoSecretKey
+  #       EsUrl: !If [UseElasticSearchCluster, !Ref ElasticSearchClusterUrl, !Sub "https://${ELASTICSEARCH.Outputs.DomainEndpoint}"]
+  #       EsCA: !Ref ElasticSearchClusterCA
+  #       LogLevel: "INFO"
+  #       OauthClientId: svcsolvestack
+  #       OauthClientSecret: !Ref ClientSecret
+  #       CentralLoggingURL: !Ref CentralLoggingURL
+  #       SlackToken: !Ref SlackToken
+  #       SlackChannel: !Ref SlackChannel
+  #       DataInsightsEmail: !Ref DataInsightsEmail
+  #       DataInsightsPassword: !Ref DataInsightsPassword
+  #       DataInsightsUrl: !Ref DataInsightsUrl
+  #       DataInsightsIsEnabled: !Ref DataInsightsIsEnabled
+  #       ReportingBackend: !Ref ReportingBackend
+
+  # SvcSolvestackApiScheduler:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./services/svc-solvestack-api-scheduler/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub svc-solvestack-scheduler-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: 1
+  #       MaxCount: 1
+  #       ContainerImageTag: !Ref ContainerImageTag
+  #       LoginURL: !Ref PrimaryURL
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       SolvestackOrgId: !Ref SolvestackOrgId
+  #       AwsAccessKeyId: !Ref AwsAccessKey
+  #       AwSecretAccessKey: !Ref AwsSecretKey
+  #       StorageBucketName: !Sub svc-solvestack-media-${AWS::StackName}
+  #       RedisEndpoint: !GetAtt REDISINSTANCE.Outputs.RedisAddress
+  #       IsDebug: !Ref IsDebug
+  #       SwaggerEnabled: !Ref SwaggerEnabled
+  #       DbUsername: !Ref DatabaseUsername
+  #       DbPassword: !Ref DatabasePassword
+  #       DbEndpoint: !GetAtt POSTGRESQL.Outputs.DbHost
+  #       DjangoEmailBackend: "django_ses.SESBackend"
+  #       DjangoSecretKey: !Ref DjangoSecretKey
+  #       EsUrl: !If [UseElasticSearchCluster, !Ref ElasticSearchClusterUrl, !Sub "https://${ELASTICSEARCH.Outputs.DomainEndpoint}"]
+  #       EsCA: !Ref ElasticSearchClusterCA
+  #       LogLevel: "INFO"
+  #       OauthClientId: svcsolvestack
+  #       OauthClientSecret: !Ref ClientSecret
+  #       CentralLoggingURL: !Ref CentralLoggingURL
+  #       SlackToken: !Ref SlackToken
+  #       SlackChannel: !Ref SlackChannel
+  #       DataInsightsEmail: !Ref DataInsightsEmail
+  #       DataInsightsPassword: !Ref DataInsightsPassword
+  #       DataInsightsUrl: !Ref DataInsightsUrl
+  #       DataInsightsIsEnabled: !Ref DataInsightsIsEnabled
+  #       ReportingBackend: !Ref ReportingBackend
+
+
+
+
+
+  #       #  SensuGoSolvestack:
+  #       #    Type: AWS::CloudFormation::Stack
+  #       #    Properties:
+  #       #      TemplateURL: ./services/sensu-solvestack/service.yaml
+  #       #      Parameters:
+  #       #        ServiceName: !Sub sensu-go-${AWS::StackName}
+  #       #        EnvironmentName: !Ref AWS::StackName
+  #       #        Cluster: !GetAtt ECS.Outputs.Cluster
+  #       #        DesiredCount: !Ref ClusterSize
+  #       #        MaxCount: !Ref ClusterSize
+  #       #        ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       #        SubString: !Ref SubString
+
+  # SvcSolvestackApiMigration:
+  #   Type: AWS::CloudFormation::Stack
+  #   Condition: EnableMigrationWorkers
+  #   Properties:
+  #     TemplateURL: ./services/svc-solvestack-api-migration-worker/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub svc-solvestack-api-migration-worker-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: !Ref MigrationWorkerCount
+  #       MaxCount: !Ref MigrationWorkerCount
+  #       ContainerImageTag: !Ref ContainerImageTag
+  #       LoginURL: !Ref PrimaryURL
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       SolvestackOrgId: !Ref SolvestackOrgId
+  #       AwsAccessKeyId: !Ref AwsAccessKey
+  #       AwSecretAccessKey: !Ref AwsSecretKey
+  #       StorageBucketName: !Sub svc-solvestack-media-${AWS::StackName}
+  #       RedisEndpoint: !GetAtt REDISINSTANCE.Outputs.RedisAddress
+  #       IsDebug: !Ref IsDebug
+  #       SwaggerEnabled: !Ref SwaggerEnabled
+  #       DbUsername: !Ref DatabaseUsername
+  #       DbPassword: !Ref DatabasePassword
+  #       DbEndpoint: !GetAtt POSTGRESQL.Outputs.DbHost
+  #       DjangoEmailBackend: "django_ses.SESBackend"
+  #       DjangoSecretKey: !Ref DjangoSecretKey
+  #       EsUrl: !If [UseElasticSearchCluster, !Ref ElasticSearchClusterUrl, !Sub "https://${ELASTICSEARCH.Outputs.DomainEndpoint}"]
+  #       EsCA: !Ref ElasticSearchClusterCA
+  #       LogLevel: "INFO"
+  #       OauthClientId: svcsolvestack
+  #       OauthClientSecret: !Ref ClientSecret
+  #       CentralLoggingURL: !Ref CentralLoggingURL
+  #       SlackToken: !Ref SlackToken
+  #       SlackChannel: !Ref SlackChannel
+  #       ChannelsConsumer: catalog-migrations project-migrations
+  #       DataInsightsEmail: !Ref DataInsightsEmail
+  #       DataInsightsPassword: !Ref DataInsightsPassword
+  #       DataInsightsUrl: !Ref DataInsightsUrl
+  #       DataInsightsIsEnabled: !Ref DataInsightsIsEnabled
+  #       ReportingBackend: !Ref ReportingBackend
+
+  # SolvestackVue:
+  #   Type: AWS::CloudFormation::Stack
+  #   Properties:
+  #     TemplateURL: ./services/solvestack-vue/service.yaml
+  #     Parameters:
+  #       ServiceName: !Sub solvestack-vue-${AWS::StackName}
+  #       EnvironmentName: !Ref AWS::StackName
+  #       VPC: !GetAtt VPC.Outputs.VPC
+  #       Cluster: !GetAtt ECS.Outputs.Cluster
+  #       DesiredCount: !If [IsProduction, 3, 2]
+  #       Priority: 8
+  #       MaxCount: 4
+  #       Path: !If [IsProduction, "www.*", !Sub "${AWS::StackName}.*"]
+  #       Listener: !GetAtt ALB.Outputs.Listener
+  #       AdminHttpsListener: !GetAtt ALB.Outputs.HttpsListener
+  #       ECSServiceAutoScalingRoleARN: !GetAtt ECS.Outputs.ECSServiceAutoScalingRole
+  #       ContainerImageTag: !Ref AWS::StackName
+  #       ServiceRole: !GetAtt SvcSolvestackApi.Outputs.ServiceRole
+  #       ForceUpgrade: !Ref LastForce
+  #       CentralLoggingURL: !Ref CentralLoggingURL

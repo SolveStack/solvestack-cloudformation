@@ -1,0 +1,29 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  A basic CloudFormation template for an Elasitcache Redis instance.
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+
+Resources:
+
+  EsUpdatedSns:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub ES-Updated-SNS-${EnvironmentName}
+
+  SkuUpdatedSns:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Sub Sku-Updated-SNS-${EnvironmentName}
+
+
+Outputs:
+  EsUpdatedSnsARN:
+    Value: !Ref EsUpdatedSns
+  SkuUpdatedSnsARN:
+    Value: !Ref SkuUpdatedSns

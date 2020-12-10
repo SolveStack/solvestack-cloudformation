@@ -1,0 +1,53 @@
+
+Description: 'Provides extra headers for static content served by cloudfront. Must
+  be set up in us-east-1
+
+  '
+Outputs:
+  ResponseHeaderLambda:
+    Value:
+      Ref: ResponseHeaderFunctionVersion
+Parameters:
+  EnvironmentName:
+    Type: String
+  LambdaCodeBucket:
+    Default: solvestack-lambda-code
+    Type: String
+Resources:
+  ResponseHeaderFunctionVersion:
+    Properties:
+      Description:
+        Fn::Sub: Response Headers for the ${EnvironmentName} Domain
+      FunctionName:
+        Ref: ResponseHeaderLambda
+    Type: AWS::Lambda::Version
+  ResponseHeaderLambda:
+    Properties:
+      Code:
+        S3Bucket:
+          Ref: LambdaCodeBucket
+        S3Key:
+          Fn::Sub: ResponseHeaders/${EnvironmentName}/index.js.zip
+      Handler: index.handler
+      Role:
+        Fn::GetAtt:
+        - ResponseHeaderRole
+        - Arn
+      Runtime: nodejs10.x
+      Timeout: 2
+    Type: AWS::Lambda::Function
+  ResponseHeaderRole:
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Action:
+          - sts:AssumeRole
+          Effect: Allow
+          Principal:
+            Service:
+            - edgelambda.amazonaws.com
+            - lambda.amazonaws.com
+        Version: 2012-10-17
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+    Type: AWS::IAM::Role

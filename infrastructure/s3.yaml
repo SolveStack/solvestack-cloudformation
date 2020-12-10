@@ -1,0 +1,18 @@
+Description: >
+  S3 bucket for storing public files - PUBLIC ACCESS READ, BE CAREFUL!
+
+Parameters:
+  EnvironmentName:
+    Type: String
+
+Resources:
+  ENVS3BUCKET:
+    Type: AWS::S3::Bucket
+    Properties:
+      AccessControl: PublicRead
+      BucketName: !Sub ${EnvironmentName}-branded-components
+      PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false

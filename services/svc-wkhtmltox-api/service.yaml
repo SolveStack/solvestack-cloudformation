@@ -1,0 +1,263 @@
+Description: >
+
+
+Parameters:
+
+    ServiceName:
+      Description: The name of this service.  This will need to be edited when you create a new service
+      Type: String
+    EnvironmentName:
+      Type: String
+    VPC:
+      Description: The VPC that the ECS cluster is deployed to
+      Type: AWS::EC2::VPC::Id
+    Cluster:
+      Description: Please provide the ECS Cluster ID that this service should run on
+      Type: String
+    DesiredCount:
+      Description: How many instances of this task should we run across our cluster?
+      Type: Number
+      Default: 2
+    MaxCount:
+      Description: Maximum number of instances of this task we can run across our cluster
+      Type: Number
+      Default: 3
+    PrivateLoadBalancerUrl:
+      Description: The private load balancer
+      Type: String
+    PrivateHttpListener:
+      Description: The Application Load Balancer listener to register with
+      Type: String
+    PrivateHostedZoneId:
+      Type: String
+      Description: Internal hosted Zone
+    PrivateALBHostedZoneId:
+      Type: String
+      Description: ALB hosted zone for if different
+    PathPriority:
+      Description: Temporary load balancer listener priority for path-route.
+      Type: String
+      Default: 2
+    ECSServiceAutoScalingRoleARN:
+      Description: The ECS service auto scaling role ARN
+      Type: String
+    SlackToken:
+      Type: String
+    SlackChannel:
+      Type: String
+
+
+Conditions:
+  IsProduction: !Equals [ !Ref EnvironmentName, prod ]
+
+Resources:
+
+    Service:
+        Type: AWS::ECS::Service
+        DependsOn:
+          - PathHttpListenerRule
+        Properties:
+            #To update this service, add -{AWS::StackName} to the following line, run CF, then remove and run again.
+            ServiceName: !Sub ${ServiceName}
+            Cluster: !Ref Cluster
+            Role: !Ref ServiceRole
+            DesiredCount: !Ref DesiredCount
+            PlacementStrategies:
+                - Type: spread
+                  Field: host
+            TaskDefinition: !Ref TaskDefinition
+            LaunchType: EC2
+            LoadBalancers:
+                - ContainerName: !Ref ServiceName
+                  ContainerPort: 80
+                  TargetGroupArn: !Ref TargetGroup
+
+    TaskDefinition:
+        Type: AWS::ECS::TaskDefinition
+        Properties:
+            Family: !Ref ServiceName
+            ContainerDefinitions:
+                - Name: !Ref ServiceName
+                  Essential: true
+                  Image: solvestack/atta-wkhtmltox-api:latest
+                  MemoryReservation: 256
+                  Environment:
+                    - Name: ENVIRONMENT_NAME
+                      Value: !Ref EnvironmentName
+                    - Name: SELF_MONITORING_SLACK_TOKEN
+                      Value: !Ref SlackToken
+                    - Name: SELF_MONITORING_SLACK_CHANNEL
+                      Value: !Ref SlackChannel
+                  PortMappings:
+                    - ContainerPort: 80
+                  LogConfiguration:
+                    LogDriver: json-file
+
+    TargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            VpcId: !Ref VPC
+            Port: 80
+            Protocol: HTTP
+            Matcher:
+                HttpCode: 200-299
+            HealthCheckIntervalSeconds: 60
+            HealthCheckPath: /status
+            HealthCheckProtocol: HTTP
+            HealthCheckTimeoutSeconds: 30
+            HealthyThresholdCount: 2
+            TargetGroupAttributes:
+              - Key: deregistration_delay.timeout_seconds
+                Value: '30'
+              - Key: load_balancing.algorithm.type
+                Value: 'least_outstanding_requests'
+
+    PathHttpListenerRule:
+      Type: AWS::ElasticLoadBalancingV2::ListenerRule
+      Properties:
+        ListenerArn: !Ref PrivateHttpListener
+        Priority: !Ref PathPriority
+        Conditions:
+          - Field: host-header
+            Values:
+            - !Sub wkhtmltox-${EnvironmentName}.*
+        Actions:
+          - TargetGroupArn: !Ref TargetGroup
+            Type: forward
+
+    PrivateWkhtmltoxDNS:
+      Type: AWS::Route53::RecordSetGroup
+      Properties:
+        HostedZoneId: !Ref PrivateHostedZoneId
+        Comment: Zone apex alias targeted to private ALB LoadBalancer.
+        RecordSets:
+          - Name: !Sub "wkhtmltox-${EnvironmentName}.internal.solvestack.com"
+            Type: A
+            AliasTarget:
+              HostedZoneId: !Ref PrivateALBHostedZoneId
+              DNSName: !Ref PrivateLoadBalancerUrl
+
+    # This IAM Role grants the service access to register/unregister with the
+    # Application Load Balancer (ALB). It is based on the default documented here:
+    # http://docs.aws.amazon.com/AmazonECS/latest/developerguide/service_IAM_role.html
+    ServiceRole:
+        Type: AWS::IAM::Role
+        Properties:
+            RoleName: !Sub ecs-service-${AWS::StackName}
+            Path: /
+            AssumeRolePolicyDocument: |
+                {
+                    "Statement": [{
+                        "Effect": "Allow",
+                        "Principal": { "Service": [ "ecs.amazonaws.com" ]},
+                        "Action": [ "sts:AssumeRole" ]
+                    }]
+                }
+            Policies:
+                - PolicyName: !Sub ecs-service-${AWS::StackName}
+                  PolicyDocument:
+                    {
+                        "Version": "2012-10-17",
+                        "Statement": [{
+                                "Effect": "Allow",
+                                "Action": [
+                                    "ec2:AuthorizeSecurityGroupIngress",
+                                    "ec2:Describe*",
+                                    "elasticloadbalancing:DeregisterInstancesFromLoadBalancer",
+                                    "elasticloadbalancing:Describe*",
+                                    "elasticloadbalancing:RegisterInstancesWithLoadBalancer",
+                                    "elasticloadbalancing:DeregisterTargets",
+                                    "elasticloadbalancing:DescribeTargetGroups",
+                                    "elasticloadbalancing:DescribeTargetHealth",
+                                    "elasticloadbalancing:RegisterTargets"
+                                ],
+                                "Resource": "*"
+                        }]
+                    }
+
+    ServiceScalableTarget:
+        Type: "AWS::ApplicationAutoScaling::ScalableTarget"
+        Properties:
+            MaxCapacity: !Ref MaxCount
+            MinCapacity: !Ref DesiredCount
+            ResourceId: !Join
+                - /
+                - - service
+                  - !Ref Cluster
+                  - !GetAtt Service.Name
+            RoleARN: !Ref ECSServiceAutoScalingRoleARN
+            ScalableDimension: ecs:service:DesiredCount
+            ServiceNamespace: ecs
+
+    ServiceScaleOutPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleOutPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalLowerBound: 0
+                  ScalingAdjustment: 1
+
+    ServiceScaleInPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleInPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalUpperBound: 0
+                  ScalingAdjustment: -1
+
+    CPUScaleOutAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization greater than 90% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 90% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '3'
+            Threshold: '90'
+            ComparisonOperator: GreaterThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleOutPolicy
+
+    CPUScaleInAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization less than 70% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 70% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '10'
+            Threshold: '70'
+            ComparisonOperator: LessThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleInPolicy
+
+Outputs:
+    ServiceRole:
+        Description: "The service role created"
+        Value: !Ref ServiceRole

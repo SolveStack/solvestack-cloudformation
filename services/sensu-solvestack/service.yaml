@@ -1,0 +1,187 @@
+Description: >
+
+
+Parameters:
+
+    ServiceName:
+        Description: The name of this service.  This will need to be edited when you create a new service
+        Type: String
+    Cluster:
+        Description: Please provide the ECS Cluster ID that this service should run on
+        Type: String
+    DesiredCount:
+        Description: How many instances of this task should we run across our cluster?
+        Type: Number
+        Default: 2
+    MaxCount:
+        Description: Maximum number of instances of this task we can run across our cluster
+        Type: Number
+        Default: 3
+    ECSServiceAutoScalingRoleARN:
+        Description: The ECS service auto scaling role ARN
+        Type: String
+    EnvironmentName:
+        Type: String
+        Default: "1800"
+    SubString:
+        Type: String
+        Default: "Default"
+
+Resources:
+    TaskDefinition1:
+        Type: AWS::ECS::TaskDefinition
+        Properties:
+            Family: !Ref ServiceName
+            TaskRoleArn: !Ref TaskDefinitionRole
+            ContainerDefinitions:
+                - Name: !Ref ServiceName
+                  Essential: true
+                  Image: sensu/sensu-rhel:5.13.1
+                  Command:
+                     - "/opt/sensu/bin/sensu-agent"
+                     - "start"
+                  Environment:
+                    -
+                      Name: SENSU_BACKEND_URL
+                      Value: ws://sensu-go.solvestack.com:8081
+                    -
+                      Name: SENSU_SUBSCRIPTIONS
+                      Value: !Ref SubString
+                    -
+                      Name: SENSU_LOG_LEVEL
+                      Value: debug
+                    -
+                      Name: SENSU_KEEPALIVE_INTERVAL
+                      Value: 5
+                    -
+                      Name: SENSU_KEEPALIVE_TIMEOUT
+                      Value: 10
+                  Memory: 512
+                  LogConfiguration:
+                    LogDriver: awslogs
+                    Options:
+                        awslogs-group: !Ref AWS::StackName
+                        awslogs-region: !Ref AWS::Region
+
+    TaskDefinitionRole:
+        Type: AWS::IAM::Role
+        Properties:
+            Path: /
+            RoleName: !Sub ${EnvironmentName}-ECSTaskRole-${AWS::Region}-Sensu
+            ManagedPolicyArns: ["arn:aws:iam::461537903867:policy/sensu_test_policy"]
+            AssumeRolePolicyDocument: |
+                {
+                    "Statement": [{
+                        "Action": "sts:AssumeRole",
+                        "Effect": "Allow",
+                        "Principal": {
+                            "Service": [
+                            "ecs-tasks.amazonaws.com",
+                            "ec2.amazonaws.com"
+                        ]
+                        }
+                    }]
+                }
+
+    CloudWatchLogsGroup:
+        Type: AWS::Logs::LogGroup
+        Properties:
+            LogGroupName: !Ref AWS::StackName
+            RetentionInDays: 365
+
+    Service:
+        Type: AWS::ECS::Service
+        DependsOn: TaskDefinition1
+        Properties:
+            ServiceName: !Ref ServiceName
+            Cluster: !Ref Cluster
+            DesiredCount: !Ref DesiredCount
+            PlacementStrategies:
+                - Type: spread
+                  Field: host
+            TaskDefinition: !Ref TaskDefinition1
+
+    ServiceScalableTarget:
+        Type: "AWS::ApplicationAutoScaling::ScalableTarget"
+        Properties:
+            MaxCapacity: !Ref MaxCount
+            MinCapacity: !Ref DesiredCount
+            ResourceId: !Join
+                - /
+                - - service
+                  - !Ref Cluster
+                  - !GetAtt Service.Name
+            RoleARN: !Ref ECSServiceAutoScalingRoleARN
+            ScalableDimension: ecs:service:DesiredCount
+            ServiceNamespace: ecs
+
+    ServiceScaleOutPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleOutPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalLowerBound: 0
+                  ScalingAdjustment: 1
+
+    ServiceScaleInPolicy:
+        Type : "AWS::ApplicationAutoScaling::ScalingPolicy"
+        Properties:
+            PolicyName: ServiceScaleInPolicy
+            PolicyType: StepScaling
+            ScalingTargetId: !Ref ServiceScalableTarget
+            StepScalingPolicyConfiguration:
+                AdjustmentType: ChangeInCapacity
+                Cooldown: 1800
+                MetricAggregationType: Average
+                StepAdjustments:
+                - MetricIntervalUpperBound: 0
+                  ScalingAdjustment: -1
+
+    CPUScaleOutAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization greater than 90% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 90% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '3'
+            Threshold: '90'
+            ComparisonOperator: GreaterThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleOutPolicy
+
+    CPUScaleInAlarm:
+        Type: AWS::CloudWatch::Alarm
+        Properties:
+            AlarmName: !Sub CPU utilization less than 70% ${ServiceName}
+            AlarmDescription: Alarm if cpu utilization greater than 70% of reserved cpu
+            Namespace: AWS/ECS
+            MetricName: CPUUtilization
+            Dimensions:
+            - Name: ClusterName
+              Value: !Ref Cluster
+            - Name: ServiceName
+              Value: !GetAtt Service.Name
+            Statistic: Maximum
+            Period: '60'
+            EvaluationPeriods: '10'
+            Threshold: '70'
+            ComparisonOperator: LessThanThreshold
+            AlarmActions:
+            - !Ref ServiceScaleInPolicy
+
+    HelloBucket:
+      Type: AWS::S3::Bucket

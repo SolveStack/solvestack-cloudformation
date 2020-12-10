@@ -1,0 +1,630 @@
+
+Conditions:
+  IsProduction:
+    Fn::Equals:
+    - Ref: AWS::StackName
+    - prod
+Description: ''
+Parameters:
+  AccessTokenLifetimeMinutes:
+    Default: '60'
+    Type: String
+  AspNetCoreEnvironment:
+    AllowedValues:
+    - Production
+    - Development
+    Description: Used for DOTNET projects.  Either Production or Development
+    Type: String
+  SolvestackOrgId:
+    Default: CHANGEME
+    Type: String
+  AwsAccessKey:
+    Type: String
+  AwsSecretKey:
+    Type: String
+  CentralVPNSecurityGroup:
+    Default: sg-0a3dc649e97adf790
+    Type: String
+  Cert:
+    Default: arn:aws:acm:us-west-2:461537903867:certificate/f0207481-1f72-41c6-930a-9c8b31a6e4f3
+    Description: Certificate ARN to use, default is solvestack.com
+    Type: String
+  ClientSecret:
+    Description: Client secret for oauth
+    Type: String
+  ContainerImageTag:
+    Default: master
+    Description: The tag to use for all container images.
+    Type: String
+  DatabasePassword:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DatabaseUsername:
+    Description: The endpoint for the postgres database created for this deployment
+    Type: String
+  DjangoSecretKey:
+    Description: DjangoSecret Key
+    Type: String
+  EfsEndpoint:
+    Default: 127.0.0.1
+    Description: Endpoint for persistent storage for containers. TODO - move to CF
+      managed or remove.
+    Type: String
+  HostedZoneId:
+    Default: Z07515425R88X5ZJDD64
+    Description: The HOSTED_ZONE_ID in AWS for solvestack.com (may change to another
+      hosted zone in future)
+    Type: String
+  IsDebug:
+    Default: true
+    Type: String
+  LastForce:
+    Description: last time services were forced to update
+    Type: String
+  MaxPasswordResetAgeSeconds:
+    Default: '1800'
+    Type: String
+  MaxRegistrationTokenAgeSeconds:
+    Default: '864000'
+    Type: String
+  PrimaryURL:
+    Type: String
+  PrivateSubnet:
+    Description: Please enter a comma seperated list of IP ranges (CIDR notation)
+      for the private subnet
+    Type: CommaDelimitedList
+  PublicSubnet:
+    Description: Please enter a comma seperated list of IP ranges (CIDR notation)
+      for the public subnet
+    Type: CommaDelimitedList
+  RedisHostType:
+    Default: cache.t2.micro
+    Description: size of Redis nodes.
+    Type: String
+  RefreshTokenLifetimeMinutes:
+    Default: '1440'
+    Type: String
+  ResponseHeaderLambda:
+    Default: arn:aws:lambda:us-east-1:461537903867:function:prodresponseheader-ResponseHeaderLambda-JBUNBYGZN0RO:2
+    Type: String
+  S3MediaBucketName:
+    Type: String
+  SnapshotIdentifier:
+    Description: identifier of snapshot to create db from
+    Type: String
+  SwaggerEnabled:
+    Default: false
+    Type: String
+  VpcCIDR:
+    Description: Please enter the IP range (CIDR notation) for this VPC
+    Type: String
+Resources:
+  ALB:
+    Properties:
+      Parameters:
+        AdminLoadBalancerSecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.AdminLoadBalancerSecurityGroup
+        Cert:
+          Ref: Cert
+        EnvironmentName:
+          Ref: AWS::StackName
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.LoadBalancerSecurityGroup
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnets
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/0719f8907ed748c6586a03d838647665.template
+    Type: AWS::CloudFormation::Stack
+  AdminDNS:
+    Properties:
+      Comment: Zone apex alias targeted to ALB LoadBalancer.
+      HostedZoneId:
+        Ref: HostedZoneId
+      RecordSets:
+      - AliasTarget:
+          DNSName:
+            Fn::GetAtt:
+            - ALB
+            - Outputs.AdminLoadBalancerUrl
+          HostedZoneId:
+            Fn::GetAtt:
+            - ALB
+            - Outputs.HostedZoneID
+        Name:
+          Fn::If:
+          - IsProduction
+          - prod-admin.solvestack.com
+          - Fn::Sub: ${AWS::StackName}-admin.solvestack.com
+        Type: A
+    Type: AWS::Route53::RecordSetGroup
+  SolvestackVue:
+    Properties:
+      Parameters:
+        AdminHttpsListener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.AdminHttpsListener
+        Cluster:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.Cluster
+        ContainerImageTag:
+          Ref: AWS::StackName
+        DesiredCount: 1
+        ECSServiceAutoScalingRoleARN:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.ECSServiceAutoScalingRole
+        EnvironmentName:
+          Ref: AWS::StackName
+        ForceUpgrade:
+          Ref: LastForce
+        Listener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.AdminListener
+        MaxCount: 2
+        Path:
+          Fn::Sub: ${AWS::StackName}-admin.*
+        Priority: 7
+        ServiceName:
+          Fn::Sub: solvestack-frontend-${AWS::StackName}
+        ServiceRole:
+          Fn::GetAtt:
+          - SvcSolvestackApi
+          - Outputs.ServiceRole
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/81daf2755932be4b96bacd4470c227e1.template
+    Type: AWS::CloudFormation::Stack
+  Bastion:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        InstanceAMI: ami-a0cfeed8
+        InstanceType: t2.micro
+        KeyName: admin-primary
+        PublicSubnet:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnet1
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.ECSHostSecurityGroup
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/dc6cfa6b13c043e89e4ab272d49b34fd.template
+    Type: AWS::CloudFormation::Stack
+  CLOUDFRONT:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        HostedZoneId:
+          Ref: HostedZoneId
+        ResponseHeaderLambda:
+          Ref: ResponseHeaderLambda
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/080d4b0187e06097fd80ffd56c6c3fc0.template
+    Type: AWS::CloudFormation::Stack
+  ECS:
+    Properties:
+      Parameters:
+        ClusterSize: 3
+        EfsEndpoint:
+          Fn::GetAtt:
+          - EFS
+          - Outputs.EfsName
+        EnvironmentName:
+          Ref: AWS::StackName
+        InstanceType: m5a.large
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.ECSHostSecurityGroup
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PrivateSubnets
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/7c4be091e066cc77424187e7943934c4.template
+    Type: AWS::CloudFormation::Stack
+  EFS:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        PrivateSubnet1:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PrivateSubnet1
+        PrivateSubnet2:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PrivateSubnet2
+        PrivateSubnet3:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PrivateSubnet3
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.ECSHostSecurityGroup
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/d3c90b54f45e3f5bc7f5cbe31d81e7c8.template
+    Type: AWS::CloudFormation::Stack
+  ELASTICSEARCH:
+    Properties:
+      Parameters:
+        DomainName:
+          Fn::Sub: ${AWS::StackName}-es
+        ElasticsearchVersion: '6.0'
+        EnvironmentName:
+          Ref: AWS::StackName
+        EsSecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.ESSecurityGroup
+        InstanceType: t2.medium.elasticsearch
+        Subnet:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnet1
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/21f0184aba2c857e24e4bec814162ea7.template
+    Type: AWS::CloudFormation::Stack
+  ENVS3BUCKET:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/92e27e6a6a92a175280ff1c931db80e2.template
+    Type: AWS::CloudFormation::Stack
+  LifecycleHook:
+    Properties:
+      Parameters:
+        Cluster:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.Cluster
+        ECSAutoScalingGroupName:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.ECSAutoScalingGroupName
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/f14da7b1db73693146e800c64de3dd83.template
+    Type: AWS::CloudFormation::Stack
+  POSTGRESQL:
+    Properties:
+      Parameters:
+        DatabasePassword:
+          Ref: DatabasePassword
+        DatabaseUsername:
+          Ref: DatabaseUsername
+        EnvironmentName:
+          Ref: AWS::StackName
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.RDSSecurityGroup
+        SnapshotIdentifier:
+          Ref: SnapshotIdentifier
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PublicSubnets
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/60d131bdc513d25ed14f543cef5d2d25.template
+    Type: AWS::CloudFormation::Stack
+  REDISINSTANCE:
+    Properties:
+      Parameters:
+        CachePort: 6379
+        ClusterNodeType:
+          Ref: RedisHostType
+        EnvironmentName:
+          Ref: AWS::StackName
+        SecurityGroup:
+          Fn::GetAtt:
+          - SecurityGroups
+          - Outputs.ECSHostSecurityGroup
+        Subnets:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.PrivateSubnets
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/9f358fa77b107c4916c9563c4a0ee0c9.template
+    Type: AWS::CloudFormation::Stack
+  SNSTOPICS:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/9ea7c4200603bd8830ca7a1825142a9d.template
+    Type: AWS::CloudFormation::Stack
+  SecurityGroups:
+    Properties:
+      Parameters:
+        CentralVPNSecurityGroup:
+          Ref: CentralVPNSecurityGroup
+        EnvironmentName:
+          Ref: AWS::StackName
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+        VpcCIDR:
+          Ref: VpcCIDR
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/f8cb9681ee7208e307534ec4e50b83b9.template
+    Type: AWS::CloudFormation::Stack
+  SvcSolvestackApi:
+    Properties:
+      Parameters:
+        AccessTokenLifetimeMinutes:
+          Ref: AccessTokenLifetimeMinutes
+        SolvestackOrgId:
+          Ref: SolvestackOrgId
+        AwSecretAccessKey:
+          Ref: AwsSecretKey
+        AwsAccessKeyId:
+          Ref: AwsAccessKey
+        Cluster:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.Cluster
+        ContainerImageTag:
+          Ref: ContainerImageTag
+        DbEndpoint:
+          Fn::GetAtt:
+          - POSTGRESQL
+          - Outputs.DbHost
+        DbPassword:
+          Ref: DatabasePassword
+        DbUsername:
+          Ref: DatabaseUsername
+        DesiredCount: 1
+        DjangoEmailBackend: django_ses.SESBackend
+        DjangoSecretKey:
+          Ref: DjangoSecretKey
+        ECSServiceAutoScalingRoleARN:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.ECSServiceAutoScalingRole
+        EnvironmentName:
+          Ref: AWS::StackName
+        EsUpdatedSns:
+          Fn::GetAtt:
+          - SNSTOPICS
+          - Outputs.EsUpdatedSnsARN
+        EsUrl:
+          Fn::Sub: https://${ELASTICSEARCH.Outputs.DomainEndpoint}
+        HttpsListener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.HttpsListener
+        IsDebug:
+          Ref: IsDebug
+        Listener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.Listener
+        LogLevel: DEBUG
+        LoginURL:
+          Ref: PrimaryURL
+        MaxCount: 3
+        MaxPasswordResetAgeSeconds:
+          Ref: MaxPasswordResetAgeSeconds
+        MaxRegistrationTokenAgeSeconds:
+          Ref: MaxRegistrationTokenAgeSeconds
+        OauthClientId: svcsolvestack
+        OauthClientSecret:
+          Ref: ClientSecret
+        OauthServiceRootUrl:
+          Fn::Sub: https://svc-solvestack-auth.${AWS::StackName}.solvestack.com
+        Path: svc-solvestack-api.*
+        Priority: 5
+        RedisEndpoint:
+          Fn::GetAtt:
+          - REDISINSTANCE
+          - Outputs.RedisAddress
+        RefreshTokenLifetimeMinutes:
+          Ref: RefreshTokenLifetimeMinutes
+        ServiceName:
+          Fn::Sub: svc-solvestack-api-${AWS::StackName}
+        SnsTopicSkuUpdateArn:
+          Fn::GetAtt:
+          - SNSTOPICS
+          - Outputs.SkuUpdatedSnsARN
+        StorageBucketName:
+          Fn::Sub: svc-solvestack-media-${AWS::StackName}
+        SwaggerEnabled:
+          Ref: SwaggerEnabled
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/c73348df1dde814cc8b2f1186e659ac5.template
+    Type: AWS::CloudFormation::Stack
+  SvcSolvestackApiWorker:
+    Properties:
+      Parameters:
+        AccessTokenLifetimeMinutes:
+          Ref: AccessTokenLifetimeMinutes
+        SolvestackOrgId:
+          Ref: SolvestackOrgId
+        AwSecretAccessKey:
+          Ref: AwsSecretKey
+        AwsAccessKeyId:
+          Ref: AwsAccessKey
+        Cluster:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.Cluster
+        ContainerImageTag:
+          Ref: ContainerImageTag
+        DbEndpoint:
+          Fn::GetAtt:
+          - POSTGRESQL
+          - Outputs.DbHost
+        DbPassword:
+          Ref: DatabasePassword
+        DbUsername:
+          Ref: DatabaseUsername
+        DesiredCount: 2
+        DjangoEmailBackend: django_ses.SESBackend
+        DjangoSecretKey:
+          Ref: DjangoSecretKey
+        ECSServiceAutoScalingRoleARN:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.ECSServiceAutoScalingRole
+        EnvironmentName:
+          Ref: AWS::StackName
+        EsUpdatedSns:
+          Fn::GetAtt:
+          - SNSTOPICS
+          - Outputs.EsUpdatedSnsARN
+        EsUrl:
+          Fn::Sub: https://${ELASTICSEARCH.Outputs.DomainEndpoint}
+        IsDebug:
+          Ref: IsDebug
+        LogLevel: INFO
+        LoginURL:
+          Ref: PrimaryURL
+        MaxCount: 3
+        MaxPasswordResetAgeSeconds:
+          Ref: MaxPasswordResetAgeSeconds
+        MaxRegistrationTokenAgeSeconds:
+          Ref: MaxRegistrationTokenAgeSeconds
+        OauthClientId: svcsolvestack
+        OauthClientSecret:
+          Ref: ClientSecret
+        OauthServiceRootUrl:
+          Fn::Sub: https://svc-solvestack-auth.${AWS::StackName}.solvestack.com
+        RedisEndpoint:
+          Fn::GetAtt:
+          - REDISINSTANCE
+          - Outputs.RedisAddress
+        RefreshTokenLifetimeMinutes:
+          Ref: RefreshTokenLifetimeMinutes
+        ServiceName:
+          Fn::Sub: svc-solvestack-api-worker-${AWS::StackName}
+        SnsTopicSkuUpdateArn:
+          Fn::GetAtt:
+          - SNSTOPICS
+          - Outputs.SkuUpdatedSnsARN
+        StorageBucketName:
+          Fn::Sub: svc-solvestack-media-${AWS::StackName}
+        SwaggerEnabled:
+          Ref: SwaggerEnabled
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/d2caec467fb91bcd9e8b0e977397e1e0.template
+    Type: AWS::CloudFormation::Stack
+  SvcSolvestackNotifications:
+    Properties:
+      Parameters:
+        AwsAccessKey:
+          Ref: AwsAccessKey
+        AwsSecretKey:
+          Ref: AwsSecretKey
+        Cluster:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.Cluster
+        ContainerImageTag:
+          Ref: ContainerImageTag
+        DesiredCount: 2
+        ECSServiceAutoScalingRoleARN:
+          Fn::GetAtt:
+          - ECS
+          - Outputs.ECSServiceAutoScalingRole
+        ForceUpgrade:
+          Ref: LastForce
+        HttpsListener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.HttpsListener
+        Listener:
+          Fn::GetAtt:
+          - ALB
+          - Outputs.Listener
+        Path: svc-solvestack-notifications.*
+        Priority: 3
+        ServiceName:
+          Fn::Sub: svc-solvestack-notifications-${AWS::StackName}
+        ServiceRole:
+          Fn::GetAtt:
+          - SvcSolvestackApi
+          - Outputs.ServiceRole
+        VPC:
+          Fn::GetAtt:
+          - VPC
+          - Outputs.VPC
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/d46dee0c839a1b8b45edb22f225fc180.template
+    Type: AWS::CloudFormation::Stack
+  VPC:
+    Properties:
+      Parameters:
+        EnvironmentName:
+          Ref: AWS::StackName
+        PrivateSubnet1CIDR:
+          Fn::Select:
+          - 0
+          - Ref: PrivateSubnet
+        PrivateSubnet2CIDR:
+          Fn::Select:
+          - 1
+          - Ref: PrivateSubnet
+        PrivateSubnet3CIDR:
+          Fn::Select:
+          - 2
+          - Ref: PrivateSubnet
+        PublicSubnet1CIDR:
+          Fn::Select:
+          - 0
+          - Ref: PublicSubnet
+        PublicSubnet2CIDR:
+          Fn::Select:
+          - 1
+          - Ref: PublicSubnet
+        PublicSubnet3CIDR:
+          Fn::Select:
+          - 2
+          - Ref: PublicSubnet
+        VpcCIDR:
+          Ref: VpcCIDR
+      TemplateURL: https://s3.amazonaws.com/solvestack-demo-cloudformation/4aa82a694ab67a4f3a0399a0fa014359.template
+    Type: AWS::CloudFormation::Stack
+  myDNS:
+    Properties:
+      Comment: Zone apex alias targeted to ALB LoadBalancer.
+      HostedZoneId:
+        Ref: HostedZoneId
+      RecordSets:
+      - AliasTarget:
+          DNSName:
+            Fn::GetAtt:
+            - ALB
+            - Outputs.LoadBalancerUrl
+          HostedZoneId:
+            Fn::GetAtt:
+            - ALB
+            - Outputs.HostedZoneID
+        Name:
+          Fn::If:
+          - IsProduction
+          - '*.prod.solvestack.com'
+          - Fn::Sub: '*.${AWS::StackName}.solvestack.com'
+        Type: A
+    Type: AWS::Route53::RecordSetGroup

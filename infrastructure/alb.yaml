@@ -1,0 +1,175 @@
+Description: >
+    This template deploys an Application Load Balancer that exposes our various ECS services.
+    We create them it a seperate nested template, so it can be referenced by all of the other nested templates.
+
+Parameters:
+
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+
+    VPC:
+        Type: AWS::EC2::VPC::Id
+        Description: Choose which VPC the Application Load Balancer should be deployed to
+
+    Subnets:
+        Description: Choose which subnets the Application Load Balancer should be deployed to
+        Type: List<AWS::EC2::Subnet::Id>
+
+    SecurityGroup:
+        Description: Select the Security Group to apply to the Application Load Balancer
+        Type: AWS::EC2::SecurityGroup::Id
+
+    PrivateSecurityGroup:
+        Description: For the private load balancer
+        Type: AWS::EC2::SecurityGroup::Id
+
+    Cert:
+        Description: ARN of the certificate the load balancer will use.
+        Type: String
+
+Resources:
+
+    LoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Name: !Ref EnvironmentName
+            Subnets: !Ref Subnets
+            SecurityGroups:
+                - !Ref SecurityGroup
+            Tags:
+                - Key: Name
+                  Value: !Ref EnvironmentName
+                - Key: project
+                  Value: !Ref EnvironmentName
+
+    PrivateLoadBalancer:
+        Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+        Properties:
+            Name: !Sub ${EnvironmentName}-private
+            Scheme: internal
+            Subnets: !Ref Subnets
+            SecurityGroups:
+                - !Ref PrivateSecurityGroup
+            Tags:
+                - Key: Name
+                  Value: !Sub ${EnvironmentName}-private
+                - Key: project
+                  Value: !Ref EnvironmentName
+
+
+    LoadBalancerListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            LoadBalancerArn: !Ref LoadBalancer
+            Port: 80
+            Protocol: HTTP
+            DefaultActions:
+              - RedirectConfig:
+                  Host: "#{host}"
+                  Path: "/#{path}"
+                  Port: 443
+                  Protocol: "HTTPS"
+                  Query: "#{query}"
+                  StatusCode: HTTP_301
+                Type: redirect
+
+    PrivateLoadBalancerListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            LoadBalancerArn: !Ref PrivateLoadBalancer
+            Port: 80
+            Protocol: HTTP
+            DefaultActions:
+                - Type: forward
+                  TargetGroupArn: !Ref DefaultPrivateTargetGroup
+
+    ListenerCertificate:
+        Type: 'AWS::ElasticLoadBalancingV2::ListenerCertificate'
+        Properties:
+          Certificates:
+            - CertificateArn: !Ref Cert
+          ListenerArn: !Ref HttpsLoadBalancerListener
+
+    HttpsLoadBalancerListener:
+        Type: AWS::ElasticLoadBalancingV2::Listener
+        Properties:
+            LoadBalancerArn: !Ref LoadBalancer
+            Port: 443
+            Protocol: HTTPS
+            Certificates:
+                - CertificateArn: arn:aws:acm:us-west-2:461537903867:certificate/c9a515ad-f143-49ff-a37d-dbea79b04b0b
+            DefaultActions:
+                - Type: forward
+                  TargetGroupArn: !Ref DefaultTargetGroup
+
+    DefaultTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            Name: !Sub ${EnvironmentName}-default
+            VpcId: !Ref VPC
+            Port: 80
+            Protocol: HTTP
+            TargetGroupAttributes:
+                - Key: deregistration_delay.timeout_seconds
+                  Value: '15'
+
+    DefaultPrivateTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            Name: !Sub ${EnvironmentName}-private-default
+            VpcId: !Ref VPC
+            Port: 80
+            Protocol: HTTP
+            TargetGroupAttributes:
+                - Key: deregistration_delay.timeout_seconds
+                  Value: '15'
+
+    VueDefaultTargetGroup:
+        Type: AWS::ElasticLoadBalancingV2::TargetGroup
+        Properties:
+            Name: !Sub ${EnvironmentName}-vuedefault
+            VpcId: !Ref VPC
+            Port: 80
+            Protocol: HTTP
+            TargetGroupAttributes:
+                - Key: deregistration_delay.timeout_seconds
+                  Value: '15'
+
+Outputs:
+
+    LoadBalancer:
+        Description: A reference to the Application Load Balancer
+        Value: !Ref LoadBalancer
+
+    HostedZoneID:
+        Description: This is the hosted zone name id
+        Value: !GetAtt LoadBalancer.CanonicalHostedZoneID
+
+    LoadBalancerUrl:
+        Description: The URL of the ALB
+        Value: !GetAtt LoadBalancer.DNSName
+
+    Listener:
+        Description: A reference to a port 80 listener
+        Value: !Ref LoadBalancerListener
+
+    HttpsListener:
+        Description: A reference to the port 443 listener
+        Value: !Ref HttpsLoadBalancerListener
+
+    PrivateLoadBalancer:
+        Description: A reference to the Application Load Balancer
+        Value: !Ref PrivateLoadBalancer
+
+    PrivateLoadBalancerUrl:
+        Description: The URL of the ALB
+        Value: !GetAtt PrivateLoadBalancer.DNSName
+
+    PrivateHttpListener:
+            Description: A reference to a port 80 listener
+            Value: !Ref PrivateLoadBalancerListener
+
+    PrivateHostedZoneID:
+        Description: This is the hosted zone name id
+        Value: !GetAtt PrivateLoadBalancer.CanonicalHostedZoneID

@@ -1,0 +1,13 @@
+Description: >
+    This template create the DNS entries in Route53 for the site
+
+Resources:
+  HostedZoneName: solvestack.com
+  Type: AWS::Route53::RecordSet
+  Properties:
+      RecordSets:
+      - Name: !If [IsProduction, 'media.solvestack.com', !Sub 'media.${EnvironmentName}.solvestack.com']
+        Type: CNAME
+        TTL: '900'
+        ResourceRecords:
+          - svc-solvestack-media-${EnvironmentName}.s3.amazonaws.com

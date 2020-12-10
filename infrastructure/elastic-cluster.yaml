@@ -1,0 +1,260 @@
+---
+Description: EC2 instances for Elasticsearch
+
+Parameters:
+  VPC:
+    Type: AWS::EC2::VPC::Id
+    Description: Choose which VPC the security groups should be deployed to
+  Subnet1:
+    Type: String
+  Subnet2:
+    Type: String
+  Subnet3:
+    Type: String
+  EnvironmentName:
+    Type: String
+  InstanceAMI:
+    Description: Centos 7
+    Type: AWS::EC2::Image::Id
+    Default: ami-01ed306a12b7d1c96
+  InstanceType:
+    Description: Allowed Instance Sizes For General
+    Type: String
+    AllowedValues:
+      - m5a.large
+      - t3a.small
+      - t3.medium
+      - t3a.medium
+      - t3.large
+      - t3a.large
+    Default: t3.large
+  ClusterSize:
+    Type: String
+    AllowedValues:
+      - 1
+      - 3
+    Default: 3
+  KeyName:
+    Description: SSH Key Name
+    Type: AWS::EC2::KeyPair::KeyName
+    Default: admin-primary
+  ESSecurityGroup:
+    Type: String
+  CoreSecurityGroup:
+    Type: String
+  HostedZoneId:
+    Type: String
+
+Conditions:
+  HACluster: !Equals [!Ref ClusterSize, 3]
+  IsProduction: !Equals [!Ref EnvironmentName, "prod"]
+  IsDev: !Equals [!Ref EnvironmentName, "dev"]
+
+Resources:
+
+  Instance1:
+
+    Type: AWS::EC2::Instance
+    Properties:
+      DisableApiTermination: false
+      ImageId: !Ref InstanceAMI
+      InstanceType: !If [IsDev, m5a.large, !If [IsProduction, t3.large, !Ref InstanceType]]  # will update prod during maint
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref ESSecurityGroup
+        - !Ref CoreSecurityGroup
+      SubnetId: !Ref Subnet1
+      BlockDeviceMappings:
+        -
+          DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ESInstance1"
+        - Key: project
+          Value: !Ref EnvironmentName
+        - Key: ansible_group
+          Value: elasticsearch
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -v
+          yum update -y
+          yum install -y awslogs
+          mkfs -t ext4 /dev/nvme1n1
+          mkdir /var/lib/elasticsearch
+          echo "/dev/nvme1n1 /var/lib/elasticsearch ext4 defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          service awslogs start
+          chkconfig awslogs on
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_386/amazon-ssm-agent.rpm
+          sudo start amazon-ssm-agent
+
+  Instance1Ebs:
+    Type: AWS::EC2::Volume
+    Properties:
+      Size: 40
+      AvailabilityZone: !Select [0, !GetAZs '']
+      Tags:
+        - Key: project
+          Value: !Ref EnvironmentName
+    DeletionPolicy: Snapshot
+
+  Instance1EbsAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Properties:
+      Device: /dev/xvdf
+      InstanceId: !Ref Instance1
+      VolumeId: !Ref Instance1Ebs
+
+  Instance1DNS:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-es-1.internal.solvestack.com
+      Type: A
+      TTL: 3600
+      ResourceRecords:
+        -
+          !GetAtt Instance1.PrivateIp
+
+  Instance2:
+    Type: AWS::EC2::Instance
+    Condition: HACluster
+    Properties:
+      DisableApiTermination: false
+      ImageId: !Ref InstanceAMI
+      InstanceType: !If [IsDev, m5a.large, !If [IsProduction, t3.large, !Ref InstanceType]]  # dev will be sized back after RI expiration
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref ESSecurityGroup
+        - !Ref CoreSecurityGroup
+      SubnetId: !Ref Subnet2
+      BlockDeviceMappings:
+        -
+          DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ESInstance2"
+        - Key: project
+          Value: !Ref EnvironmentName
+        - Key: ansible_group
+          Value: elasticsearch
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -v
+          yum update -y
+          yum install -y awslogs
+          mkfs -t ext4 /dev/nvme1n1
+          mkdir /var/lib/elasticsearch
+          echo "/dev/nvme1n1 /var/lib/elasticsearch ext4 defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          service awslogs start
+          chkconfig awslogs on
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_386/amazon-ssm-agent.rpm
+          sudo start amazon-ssm-agent
+
+  Instance2Ebs:
+    Type: AWS::EC2::Volume
+    Condition: HACluster
+    Properties:
+      Size: 40
+      AvailabilityZone: !Select [1, !GetAZs '']
+      Tags:
+        - Key: project
+          Value: !Ref EnvironmentName
+    DeletionPolicy: Snapshot
+
+  Instance2EbsAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Condition: HACluster
+    Properties:
+      Device: /dev/xvdf
+      InstanceId: !Ref Instance2
+      VolumeId: !Ref Instance2Ebs
+
+  Instance2DNS:
+    Type: AWS::Route53::RecordSet
+    Condition: HACluster
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-es-2.internal.solvestack.com
+      Type: A
+      TTL: 3600
+      ResourceRecords:
+        -
+          !GetAtt Instance2.PrivateIp
+
+  Instance3:
+    Type: AWS::EC2::Instance
+    Condition: HACluster
+    Properties:
+      DisableApiTermination: false
+      ImageId: !Ref InstanceAMI
+      InstanceType: !If [IsDev, m5a.large, !If [IsProduction, t3.large, !Ref InstanceType]]  # will update prod during maint
+      KeyName: !Ref KeyName
+      SecurityGroupIds:
+        - !Ref ESSecurityGroup
+        - !Ref CoreSecurityGroup
+      SubnetId: !Ref Subnet3
+      BlockDeviceMappings:
+        -
+          DeviceName: /dev/sda1
+          Ebs:
+            VolumeSize: 40
+            VolumeType: gp2
+      Tags:
+        - Key: Name
+          Value: !Sub "${EnvironmentName}-ESInstance3"
+        - Key: project
+          Value: !Ref EnvironmentName
+        - Key: ansible_group
+          Value: elasticsearch
+      UserData:
+        "Fn::Base64": !Sub |
+          #!/bin/bash -v
+          yum update -y
+          yum install -y awslogs
+          mkfs -t ext4 /dev/nvme1n1
+          mkdir /var/lib/elasticsearch
+          echo "/dev/nvme1n1 /var/lib/elasticsearch ext4 defaults,nofail 0 2" >> /etc/fstab
+          mount -a
+          service awslogs start
+          chkconfig awslogs on
+          yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_386/amazon-ssm-agent.rpm
+          sudo start amazon-ssm-agent
+
+  Instance3Ebs:
+    Type: AWS::EC2::Volume
+    Condition: HACluster
+    Properties:
+      Size: 40
+      AvailabilityZone: !Select [2, !GetAZs '']
+      Tags:
+        - Key: project
+          Value: !Ref EnvironmentName
+    DeletionPolicy: Snapshot
+
+  Instance3EbsAttachment:
+    Type: AWS::EC2::VolumeAttachment
+    Condition: HACluster
+    Properties:
+      Device: /dev/xvdf
+      InstanceId: !Ref Instance3
+      VolumeId: !Ref Instance3Ebs
+
+  Instance3DNS:
+    Type: AWS::Route53::RecordSet
+    Condition: HACluster
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-es-3.internal.solvestack.com
+      Type: A
+      TTL: 3600
+      ResourceRecords:
+        -
+          !GetAtt Instance3.PrivateIp

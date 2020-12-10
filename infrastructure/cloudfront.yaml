@@ -1,0 +1,203 @@
+Description: >
+  Cloudfront configuration for serving the static front end
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  HostedZoneId:
+    Type: String
+  CloudfrontCert:
+    Type: String
+    Default: "arn:aws:acm:us-east-1:461537903867:certificate/85bd5192-a489-4061-b830-8c9a07fd03f1"
+    Description: The ARN of the SSL cert for the Cloudfront distribution, must be in us-east-1.
+  ResponseHeaderLambda:
+    Type: String
+
+Conditions:
+    IsProduction: !Equals [ !Ref EnvironmentName, prod ]
+    IsDev: !Equals [ !Ref EnvironmentName, dev ]
+
+Resources:
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "Origin Access Identity for ${EnvironmentName} Distribution."
+
+  CloudFrontComponents:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: CloudFrontOriginAccessIdentity
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !If [IsProduction, 'www.solvestack.com', !Sub '${EnvironmentName}.solvestack.com']
+        Comment: !Sub "Branded Components for ${EnvironmentName}"
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /
+        DefaultCacheBehavior:
+          Compress: true
+          MinTTL: 0
+          DefaultTTL: 0
+          MaxTTL: 0
+          ViewerProtocolPolicy: redirect-to-https
+          ForwardedValues:
+            QueryString: true
+          TargetOriginId: !Sub branded-components-${EnvironmentName}
+          LambdaFunctionAssociations:
+            - EventType: origin-response
+              LambdaFunctionARN: !Ref ResponseHeaderLambda
+        CacheBehaviors:
+          - PathPattern: "/static/*"
+            Compress: true
+            MinTTL: !If [IsDev, 0, 2592000]
+            DefaultTTL: !If [IsDev, 0, 2592000]
+            MaxTTL: !If [IsDev, 0, 2592000]
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub branded-components-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "/asset-manifest.json"
+            Compress: true
+            MinTTL: !If [IsDev, 0, 2592000]
+            DefaultTTL: !If [IsDev, 0, 2592000]
+            MaxTTL: !If [IsDev, 0, 2592000]
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub branded-components-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "/favicon.ico"
+            Compress: true
+            MinTTL: !If [IsDev, 0, 2592000]
+            DefaultTTL: !If [IsDev, 0, 2592000]
+            MaxTTL: !If [IsDev, 0, 2592000]
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub branded-components-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "/manifest.json"
+            Compress: true
+            MinTTL: !If [IsDev, 0, 2592000]
+            DefaultTTL: !If [IsDev, 0, 2592000]
+            MaxTTL: !If [IsDev, 0, 2592000]
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub branded-components-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "/service-worker.js"
+            Compress: true
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub branded-components-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "api/*"
+            TargetOriginId: !If [IsProduction, 'Custom-svc-solvestack-api.solvestack.com', !Sub 'Custom-svc-solvestack-api.${EnvironmentName}.solvestack.com']
+            AllowedMethods:
+              - DELETE
+              - GET
+              - HEAD
+              - OPTIONS
+              - PATCH
+              - POST
+              - PUT
+            Compress: false
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ViewerProtocolPolicy: 'allow-all'
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all
+          - PathPattern: "/vue/service-worker.js"
+            Compress: true
+            MinTTL: 0
+            DefaultTTL: 0
+            MaxTTL: 0
+            ViewerProtocolPolicy: redirect-to-https
+            ForwardedValues:
+              QueryString: true
+            TargetOriginId: !Sub solvestack-frontend-${EnvironmentName}
+            LambdaFunctionAssociations:
+              - EventType: origin-response
+                LambdaFunctionARN: !Ref ResponseHeaderLambda
+          - PathPattern: "/vue/*"
+            TargetOriginId: !Sub solvestack-frontend-${EnvironmentName}
+            AllowedMethods:
+              - GET
+              - HEAD
+              - OPTIONS
+            Compress: false
+            MinTTL: !If [IsDev, 0, 2592000]
+            DefaultTTL: !If [IsDev, 0, 2592000]
+            MaxTTL: !If [IsDev, 0, 2592000]
+            ViewerProtocolPolicy: 'allow-all'
+            ForwardedValues:
+              QueryString: true
+              Cookies:
+                Forward: all
+        DefaultRootObject: index.html
+        Enabled: true
+        IPV6Enabled: true
+        Origins:
+          - DomainName: !If [IsProduction, 'svc-solvestack-api.solvestack.com', !Sub 'svc-solvestack-api.${EnvironmentName}.solvestack.com']
+            Id: !If [IsProduction, 'Custom-svc-solvestack-api.solvestack.com', !Sub 'Custom-svc-solvestack-api.${EnvironmentName}.solvestack.com']
+            CustomOriginConfig:
+              OriginKeepaliveTimeout: 60
+              OriginReadTimeout: 60
+              HTTPPort: '80'
+              HTTPSPort: '443'
+              OriginProtocolPolicy: 'https-only'
+              OriginSSLProtocols:
+                - TLSv1.2
+          - DomainName: !Sub ${EnvironmentName}-branded-components.s3.amazonaws.com
+            Id: !Sub branded-components-${EnvironmentName}
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}
+          - DomainName: !Sub ${EnvironmentName}-solvestack-frontend.s3.amazonaws.com
+            Id: !Sub solvestack-frontend-${EnvironmentName}
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CloudfrontCert
+          SslSupportMethod: "sni-only"
+          MinimumProtocolVersion: TLSv1.2_2018
+        #WebACLId:
+
+  CloudFrontDns:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: Zone apex alias targeted to ALB LoadBalancer.
+      RecordSets:
+      - Name: !If [IsProduction, 'www.solvestack.com', !Sub '${EnvironmentName}.solvestack.com']
+        Type: A
+        AliasTarget:
+          HostedZoneId: Z2FDTNDATAQYW2
+          DNSName: !GetAtt [CloudFrontComponents, DomainName]
+
+
+Outputs:
+  CloudfrontDistroName:
+    Value: !Ref CloudFrontComponents

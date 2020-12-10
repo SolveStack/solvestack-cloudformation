@@ -1,0 +1,74 @@
+Description: >
+  Cloudfront configuration for serving the static front end
+
+Parameters:
+  EnvironmentName:
+    Type: String
+  HostedZoneId:
+    Type: String
+  CloudfrontCert:
+    Type: String
+    Default: "arn:aws:acm:us-east-1:461537903867:certificate/8f7277d0-297c-45b0-89a9-5dd3acdd93bf"
+    Description: The ARN of the SSL cert for the Cloudfront distribution, must be in us-east-1.
+
+Conditions:
+    IsProduction: !Equals [ !Ref EnvironmentName, prod ]
+    IsDev: !Equals [ !Ref EnvironmentName, dev ]
+
+Resources:
+
+  CloudFrontOriginAccessIdentity:
+    Type: AWS::CloudFront::CloudFrontOriginAccessIdentity
+    Properties:
+      CloudFrontOriginAccessIdentityConfig:
+        Comment: !Sub "Origin Access Identity for ${EnvironmentName} Distribution."
+
+  CloudFrontComponents:
+    Type: AWS::CloudFront::Distribution
+    DependsOn: CloudFrontOriginAccessIdentity
+    Properties:
+      DistributionConfig:
+        Aliases:
+          - !If [IsProduction, 'media.solvestack.com', !Sub 'media.${EnvironmentName}.solvestack.com']
+        Comment: !Sub "Media for ${EnvironmentName}"
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /
+        DefaultCacheBehavior:
+          Compress: true
+          MinTTL: 86400
+          DefaultTTL: 86400
+          MaxTTL: 86400
+          ViewerProtocolPolicy: redirect-to-https
+          ForwardedValues:
+            QueryString: true
+          TargetOriginId: !Sub svc-solvestack-media-${EnvironmentName}
+        Enabled: true
+        IPV6Enabled: true
+        Origins:
+          - DomainName: !Sub svc-solvestack-media-${EnvironmentName}.s3.amazonaws.com
+            Id: !Sub svc-solvestack-media-${EnvironmentName}
+            S3OriginConfig:
+              OriginAccessIdentity: !Sub origin-access-identity/cloudfront/${CloudFrontOriginAccessIdentity}
+        PriceClass: PriceClass_100
+        ViewerCertificate:
+          AcmCertificateArn: !Ref CloudfrontCert
+          SslSupportMethod: "sni-only"
+
+  CloudFrontDns:
+    Type: AWS::Route53::RecordSetGroup
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Comment: Zone apex alias targeted to ALB LoadBalancer.
+      RecordSets:
+      - Name: !If [IsProduction, 'media.solvestack.com', !Sub 'media.${EnvironmentName}.solvestack.com']
+        Type: A
+        AliasTarget:
+          HostedZoneId: Z2FDTNDATAQYW2
+          DNSName: !GetAtt [CloudFrontComponents, DomainName]
+
+
+Outputs:
+  CloudfrontDistroName:
+    Value: !Ref CloudFrontComponents

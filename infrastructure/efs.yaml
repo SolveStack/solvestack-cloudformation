@@ -1,0 +1,71 @@
+Description: >
+    This template deploys an ECS cluster to the provided VPC and subnets
+    using an Auto Scaling Group
+
+Parameters:
+
+    EnvironmentName:
+        Description: An environment name that will be prefixed to resource names
+        Type: String
+
+    PrivateSubnet1:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: String
+
+    PrivateSubnet2:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: String
+
+    PrivateSubnet3:
+        Description: Choose which subnets this ECS cluster should be deployed to
+        Type: String
+
+    SecurityGroup:
+        Description: Select the Security Group to use for the ECS cluster hosts
+        Type: AWS::EC2::SecurityGroup::Id
+
+
+Resources:
+
+    EfsFileSystem:
+      Type: AWS::EFS::FileSystem
+      Properties:
+        Encrypted: false
+        FileSystemTags:
+          - Key: Name
+            Value: !Ref EnvironmentName
+          - Key: project
+            Value: !Ref EnvironmentName 
+
+    EfsMountPoint1:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId: !Ref EfsFileSystem
+        SubnetId: !Ref PrivateSubnet1
+        SecurityGroups:
+          - !Ref SecurityGroup
+
+    EfsMountPoint2:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId: !Ref EfsFileSystem
+        SubnetId: !Ref PrivateSubnet2
+        SecurityGroups:
+          - !Ref SecurityGroup
+
+    EfsMountPoint3:
+      Type: AWS::EFS::MountTarget
+      Properties:
+        FileSystemId: !Ref EfsFileSystem
+        SubnetId: !Ref PrivateSubnet3
+        SecurityGroups:
+          - !Ref SecurityGroup
+Outputs:
+
+    EfsMountPoint1:
+        Description: A reference to the ECS cluster
+        Value: !Ref EfsMountPoint1
+
+    EfsName:
+        Description: The EFS file system.
+        Value: !Ref EfsFileSystem

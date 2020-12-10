@@ -1,0 +1,147 @@
+---
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: >
+  A basic CloudFormation template for an RDS Postgres DB.
+Parameters:
+  EnvironmentName:
+    Description: An environment name that will be prefixed to resource names
+    Type: String
+  HostedZoneId:
+    Type: String
+  DatabaseUsername:
+    Description: The database admin account user name, between 1 to 16 alphanumeric characters.
+    Type: String
+  DatabasePassword:
+    ConstraintDescription: must be between 8 to 41 alphanumeric characters.
+    Description: The database admin account password, between 8 to 41 alphanumeric characters.
+    NoEcho: 'true'
+    Type: String
+
+  Subnets:
+    Description: Choose which subnets the Application Load Balancer should be deployed to
+    Type: List<AWS::EC2::Subnet::Id>
+  SecurityGroup:
+    Description: Select the Security Group to apply to the database
+    Type: AWS::EC2::SecurityGroup::Id
+  InstanceType:
+    Description: The instance type of the database
+    Default: db.t2.large
+    Type: String
+
+  BackupRetentionPeriod:
+    Description: how long to keep the databae backups
+    Default: 7
+    Type: String
+  SnapshotIdentifier:
+    Description: which snapshot are we restoring from
+    Type: String
+  DbParameterGroup:
+    Description: what parameter group to use for the postgres db
+    Type: String
+    Default: default.postgres10
+
+Conditions:
+  IsProduction: !Equals [!Ref EnvironmentName, "prod"]
+
+Resources:
+  StackAlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Stack Alarm Topic
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: CloudFormation managed DB subnet group.
+      SubnetIds: !Ref Subnets
+
+  DatabaseInstance:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      DBSnapshotIdentifier: !Ref SnapshotIdentifier
+      DBInstanceClass: !If [IsProduction, "db.m5.xlarge", !Ref 'InstanceType']
+      MultiAZ: !If [IsProduction, 'true', 'false']
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      AllowMajorVersionUpgrade: False
+      AutoMinorVersionUpgrade: True
+      DBParameterGroupName: !Ref DbParameterGroup
+      Engine: postgres
+      AllocatedStorage: "200"
+      StorageType: !If [IsProduction, io1, gp2]
+      Iops: !If [IsProduction, 2000, !Ref "AWS::NoValue"]
+      CACertificateIdentifier: "rds-ca-2019"
+      VPCSecurityGroups:
+        - !Ref SecurityGroup
+      Tags:
+        - Key: project
+          Value: !Ref EnvironmentName
+      # Engine: PostgreSQL
+      # DBClusterParameterGroupName: default.aurora-postgresql9.6
+      # Port: 5432
+      # DatabaseName: solvestack
+      # BackupRetentionPeriod: !Ref BackupRetentionPeriod
+      # PreferredBackupWindow: 01:00-02:00
+      # PreferredMaintenanceWindow: mon:03:00-mon:04:00
+      # DBSubnetGroupName: !Ref "DatabaseSubnetGroup"
+      # VpcSecurityGroupIds:
+      #   - !Ref SecurityGroup
+      # SnapshotIdentifier: !Ref SnapshotIdentifier
+      # Tags:
+      #   - Key: Name
+      #     Value: !Sub "${AWS::StackName}-pgsql"
+
+  PostgreSQLDNS:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Sub ${EnvironmentName}-postgresql.internal.solvestack.com
+      Type: CNAME
+      TTL: "3600"
+      ResourceRecords:
+        - !GetAtt DatabaseInstance.Endpoint.Address
+
+  DatabasePrimaryCPUAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Primary database CPU utilization is over 80%.
+      Namespace: AWS/RDS
+      MetricName: CPUUtilization
+      Unit: Percent
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 80
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref "DatabaseInstance"
+      AlarmActions:
+        - Ref: StackAlarmTopic
+      InsufficientDataActions:
+        - Ref: StackAlarmTopic
+
+  DatabasePrimaryMemoryAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmDescription: Primary database freeable memory is under 700MB.
+      Namespace: AWS/RDS
+      MetricName: FreeableMemory
+      Unit: Bytes
+      Statistic: Average
+      Period: 300
+      EvaluationPeriods: 2
+      Threshold: 700000000
+      ComparisonOperator: LessThanOrEqualToThreshold
+      Dimensions:
+        - Name: DBInstanceIdentifier
+          Value: !Ref "DatabaseInstance"
+      AlarmActions:
+        - Ref: StackAlarmTopic
+      InsufficientDataActions:
+        - Ref: StackAlarmTopic
+
+Outputs:
+  DbHost:
+    Description: Endpoint of the instance
+    Value: !GetAtt DatabaseInstance.Endpoint.Address
